@@ -192,6 +192,38 @@ Pentru rolurile și panoul de notificări, fără configurare manuală:
 
 Creează **📢 Update-uri** și **🎉 Evenimente** cu toate permisiunile oprite sau reutilizează rolurile salvate/rolurile cu nume echivalent unic, dacă sunt sigure. Rolurile existente nu sunt redenumite și permisiunile lor nu sunt schimbate. Roluri duplicate, de staff, cu acces în canale sau cu privilegii sunt refuzate înainte de creare. Are nevoie de Manage Roles și de View Channel, Send Messages, Embed Links, Read Message History în canal; rolul botului trebuie să fie deasupra rolurilor selectate. Helper/Moderator rămân manuale. La repetare, se reutilizează rolurile și mesajul din același canal. Vezi și `/roles_setup` pentru alegerea manuală a altor roluri.
 
+## Moderare cu istoric
+
+Configurare de administrator, alegând **rolurile existente**:
+
+```text
+/moderation_setup helper_role:@Helper moderator_role:@Moderator
+```
+
+Nu creează roluri, nu atribuie membri și nu schimbă permisiunile Discord. Helper și Moderator trebuie să fie două roluri distincte, nemanageriate, diferite de @everyone. Dacă moderarea nu este configurată, numai administratorii pot folosi comenzile. Rolurile selectate sunt excluse din acordarea automată și din butoanele de notificări.
+
+| Comandă | Acces și efect |
+| --- | --- |
+| `/warn member reason` | Helper/Moderator/admin: salvează un avertisment în istoricul privat |
+| `/warnings member page` | Helper/Moderator/admin: numai avertismentele salvate cu succes, 5/pagină |
+| `/mod_history member page` | Helper/Moderator/admin: toate cazurile și încercările înregistrate, 5/pagină |
+| `/mod_case case_id` | Helper/Moderator/admin: detaliile private ale unui caz |
+| `/timeout member minutes reason` | Moderator/admin + Moderate Members: 1–40320 minute |
+| `/untimeout member reason` | Moderator/admin + Moderate Members: elimină timeoutul |
+| `/kick member reason` | Moderator/admin + Kick Members: cere confirmare privată |
+| `/ban member reason` | Moderator/admin + Ban Members: cere confirmare, **fără ștergerea mesajelor** |
+| `/mod_log_retry case_id` | Administrator: retrimite doar logul unui caz nelivrat, fără repetarea sancțiunii |
+
+Motive obligatorii de 3–500 caractere. Rezultatele și istoricul sunt private pentru staff; avertismentul este o înregistrare internă, nu trimite automat DM candidatului. Moderatorii trebuie să aibă și permisiunile Discord native necesare; botul trebuie să le aibă separat. Pentru avertismente nu este nevoie de Moderate Members. Rolul staffului trebuie să fie deasupra rolului țintei (excepție proprietarul serverului), iar pentru sancțiuni native și rolul botului trebuie să fie deasupra. Propria persoană, boții, proprietarul și administratorii sunt protejați. Nu se acordă automat sancțiuni după un anumit număr de avertismente.
+
+Kick/ban cer un buton de confirmare valabil 2 minute și utilizabil numai de autorul cererii. La confirmare se recitesc membrii din Discord și se verifică din nou rolurile, permisiunile și ierarhia. Anularea sau expirarea nu aplică sancțiunea. Sunt acceptați numai membri încă prezenți pentru sancțiuni; istoricul se poate consulta și pentru utilizatori plecați selectabili în Discord. Unban se face momentan din setările Discord.
+
+Cazul este salvat în SQLite **înainte** de apelul Discord. Stări: în curs, aplicat, refuzat, rezultat incert. O întrerupere/restart poate lăsa un caz în curs sau incert; verifică manual în Discord înainte să repeți. Nu se reexecută sancțiuni automat și nu se pretinde tranzacție atomică între Discord și SQLite. Istoricul este numai pentru acțiunile prin acest bot; nu importă sancțiuni Carl sau acțiuni manuale din Discord. Timeoutul expiră nativ în Discord, chiar dacă botul este oprit; expirarea nu creează un caz nou.
+
+Logul detaliat cu membrul, stafful, motivul și starea folosește camera privată din `/community_logs`. Permisiunile camerei sunt reverificate/înlocuite înainte de publicare. Dacă logul e indisponibil sau oprit, cazul rămâne în SQLite și poate fi citit prin `/mod_case`; sancțiunea nu este anulată. `/mod_log_retry` nu retrimite loguri deja confirmate ca livrate. O întrerupere exact după publicarea unui log poate necesita curățarea manuală a unui duplicat. Datele intră în backup și nu au ștergere automată; administrația stabilește retenția.
+
+Nu sunt necesare alte Gateway Intents față de cele deja folosite de bot. Configurează separat Moderate Members/Kick Members/Ban Members pe rolul botului și pe Moderator, numai pentru acțiunile dorite. Nu acorda Administrator Helperilor. Validează pe conturi de test: Helper poate avertiza, nu poate sancționa; membrii obișnuiți nu pot vedea istoricul; o țintă cu rol mai înalt este refuzată. Anti-spamul și blocarea reclamelor nu fac parte din această etapă.
+
 ## Validare înainte de utilizare
 
 Testează cu un membru obișnuit și un moderator: formular pentru fiecare tip, categorie corectă, ping staff, lipsa accesului altor membri, blocarea unui al doilea tichet, preluare, adăugare/eliminare participant și redenumire. Repornește serviciul și verifică panoul/butoanele existente. Închide cu motiv: descarcă HTML și verifică mesajele și motivul, precum și lipsa accesului autorului/participanților. Redeschide și verifică accesul, preluarea resetată și statisticile. Un membru obișnuit nu trebuie să poată folosi controalele de staff. Testează și eliberarea/transferul între doi colegi, prioritatea, suspendarea/deblocarea, feedbackul din DM și `/ticket_health`. Verifică existența unei copii în `data/backups/`. Închiderea automată rămâne oprită până configurezi intenționat duratele.
@@ -211,7 +243,7 @@ Backupul dinaintea actualizării se păstrează pentru recuperare manuală cu se
 ```bash
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python -m compileall -q bot.py store.py transcript.py operations.py fivem.py applications.py community.py server_setup.py deploy
+python -m compileall -q bot.py store.py transcript.py operations.py fivem.py applications.py community.py server_setup.py moderation.py deploy
 ```
 
 Testele folosesc SQLite real și interacțiuni Discord simulate. Nu înlocuiesc validarea pe server și nu folosesc tokenuri.

@@ -39,6 +39,14 @@ class Store:
         CREATE UNIQUE INDEX IF NOT EXISTS one_pending_helper
           ON helper_applications(owner) WHERE status='pending';
         ''')
+        self.db.executescript('''
+        CREATE TABLE IF NOT EXISTS moderation_cases (
+          id INTEGER PRIMARY KEY, actor INTEGER NOT NULL, target INTEGER NOT NULL,
+          action TEXT NOT NULL, reason TEXT NOT NULL, created REAL NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending', detail TEXT NOT NULL DEFAULT '',
+          until_time REAL, log_state INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS moderation_target ON moderation_cases(target,id);
+        ''')
         columns = {r['name'] for r in self.db.execute('PRAGMA table_info(tickets)')}
         for name, definition in [('closed_at', 'REAL'), ('closed_by', 'INTEGER'), ('reason', 'TEXT'), ('priority', "TEXT NOT NULL DEFAULT 'normal'"),
                                  ('last_activity', 'REAL'), ('warned_at', 'REAL'),
@@ -268,3 +276,29 @@ class Store:
     def helper_dm(self, number, state):
         with self.db:
             self.db.execute('UPDATE helper_applications SET dm_state=? WHERE id=?',(state,number))
+
+    def moderation_create(self, actor, target, action, reason, until=None):
+        with self.db:
+            cursor=self.db.execute('INSERT INTO moderation_cases(actor,target,action,reason,created,until_time) VALUES(?,?,?,?,?,?)',
+                                   (actor,target,action,reason,time.time(),until))
+        return cursor.lastrowid
+
+    def moderation_case(self, number):
+        return self.db.execute('SELECT * FROM moderation_cases WHERE id=?',(number,)).fetchone()
+
+    def moderation_finish(self, number, status, detail=''):
+        if status not in ('applied','failed','uncertain'):
+            raise ValueError('Stare invalidă pentru cazul de moderare.')
+        with self.db:
+            self.db.execute("UPDATE moderation_cases SET status=?,detail=? WHERE id=? AND status='pending'",(status,detail,number))
+
+    def moderation_log_state(self, number, state):
+        with self.db:
+            self.db.execute('UPDATE moderation_cases SET log_state=? WHERE id=?',(state,number))
+
+    def moderation_history(self, target, page=1, warnings_only=False):
+        if page < 1:
+            raise ValueError('Pagina trebuie să fie pozitivă.')
+        condition=" AND action='warn' AND status='applied'" if warnings_only else ''
+        return self.db.execute('SELECT * FROM moderation_cases WHERE target=?'+condition+' ORDER BY id DESC LIMIT 5 OFFSET ?',
+                               (target,(page-1)*5)).fetchall()

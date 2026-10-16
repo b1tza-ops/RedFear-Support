@@ -15,6 +15,7 @@ from operations import Operations, TransferModal, RatingView, PRIORITIES
 from fivem import FiveM
 from community import Community, CommunityRoles
 from server_setup import ServerSetup
+from moderation import Moderation
 from applications import Applications, HelperPanel, HelperReview
 
 load_dotenv()
@@ -183,7 +184,7 @@ class ClosedControls(SafeView):
         await self.bot.reopen_ticket(i)
 
 
-class Bot(ServerSetup, Community, Applications, FiveM, Operations, discord.Client):
+class Bot(Moderation, ServerSetup, Community, Applications, FiveM, Operations, discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -205,6 +206,7 @@ class Bot(ServerSetup, Community, Applications, FiveM, Operations, discord.Clien
         self.applications_lock = asyncio.Lock()
         self.community_lock = asyncio.Lock()
         self.layout_lock = asyncio.Lock()
+        self.moderation_lock = asyncio.Lock()
         self.last_backup = max((p.stat().st_mtime for p in (data / 'backups').glob('[0-9]' * 8 + 'T*.sqlite3')), default=0)
         self.lock = asyncio.Lock()
         self.cooldowns = {}
@@ -216,6 +218,7 @@ class Bot(ServerSetup, Community, Applications, FiveM, Operations, discord.Clien
         self.register_applications()
         self.init_community()
         self.register_server_setup()
+        self.register_moderation()
 
     async def command_error(self, i, error):
         await report(i, getattr(error, 'original', error))
