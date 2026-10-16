@@ -155,6 +155,43 @@ Aceste funcții sunt oprite până la configurare. Nu migrează setările/istori
 
 Verifică cu un membru de test: bun venit, screening, acordare/eliminare rol, lipsa accesului la loguri și funcționarea butoanelor după restart. În canalele publice botul are nevoie de View Channel, Send Messages și Embed Links; pentru reutilizarea mesajelor și Read Message History. Pentru camera privată are nevoie de gestionarea canalelor și a permisiunilor. Rolurile Helper/Moderator și recrutarea rămân separate.
 
+## Organizare canale și creare roluri de notificări
+
+```text
+/server_setup
+```
+
+Comanda doar citește canalele și afișează un plan privat, cu numele noi și categoriile destinație. Butonul **Aplică organizarea** este rezervat administratorului care a cerut planul și expiră după 3 minute. Nu există modificări înainte de apăsare. La confirmare sunt reverificate administratorul, permisiunea Manage Channels și starea canalelor din plan; dacă numele, categoria, descrierea sau permisiunile unui canal s-au schimbat, generează altă previzualizare.
+
+Se organizează canalele pentru bun venit, regulament, anunțuri, roluri, status FiveM, conectare, actualizări, ajutor și aplicații staff în **INFORMAȚII / FIVEM / SUPORT**. Camerele de evaluare și loguri sunt mutate în **STAFF** numai dacă ID-urile lor sunt deja în configurațiile funcțiilor respective; nu se adoptă camere private doar după nume. Canalele de tichete (inclusiv cele închise), canalul de arhivă și categoriile de tichete sunt protejate.
+
+Canalele sunt identificate întâi prin alegerea explicită, apoi prin configurația funcției, ID-ul salvat de organizator și în final prin nume normalizat unic. De exemplu `👋・bun-venit` și `bun-venit` se potrivesc. Ambiguitățile opresc planul; alegerea explicită se face astfel:
+
+```text
+/server_map destination:welcome channel:#canalul-existent
+/server_setup
+```
+
+`server_map` doar salvează alegerea. Revizuiește ID-urile/mențiunile din plan înainte de confirmare. Nu se șterg canale, mesaje sau categorii vechi. Nu se sincronizează și nu se înlocuiesc permisiunile canalelor existente; accesul lor actual este păstrat chiar și când categoria destinație este diferită. Descrierile canalelor publice indicate în plan sunt înlocuite; descrierile camerelor private sunt păstrate. Organizatorul nu acordă automat acces staffului în canale existente și nu mută tichetele/arhivele. Numele se schimbă, dar ID-urile și panourile configurate rămân valabile.
+
+Pentru a **crea și canalele publice lipsă**, cere explicit:
+
+```text
+/server_setup create_missing:True
+```
+
+Acestea apar ca **NOU PUBLIC** în previzualizare. Regulamentul, anunțurile, rolurile, bun venit, statusul, ghidul de conectare, actualizările și recrutarea noi sunt numai pentru citire pentru @everyone; ajutorul nou permite scrierea. Botul primește permisiuni de publicare. Canalele create nu publică automat conținut/reguli și nu mută configurările funcțiilor; folosește comenzile specifice pentru panouri. Canalele private sunt create numai prin funcțiile lor, nu de organizator. Nu se creează voice în această etapă.
+
+ID-urile categoriilor și canalelor create sunt salvate după fiecare pas pentru reutilizare. O eroare API poate lăsa organizarea parțial aplicată; rulează din nou previzualizarea pentru continuare, nu șterge resursele salvate. Discord și SQLite nu formează o tranzacție atomică: o oprire exact între creare și salvarea ID-ului poate necesita reconciliere manuală. Nicio copie a mesajelor nu este mutată sau ștearsă.
+
+Pentru rolurile și panoul de notificări, fără configurare manuală:
+
+```text
+/roles_create_defaults channel:#roluri
+```
+
+Creează **📢 Update-uri** și **🎉 Evenimente** cu toate permisiunile oprite sau reutilizează rolurile salvate/rolurile cu nume echivalent unic, dacă sunt sigure. Rolurile existente nu sunt redenumite și permisiunile lor nu sunt schimbate. Roluri duplicate, de staff, cu acces în canale sau cu privilegii sunt refuzate înainte de creare. Are nevoie de Manage Roles și de View Channel, Send Messages, Embed Links, Read Message History în canal; rolul botului trebuie să fie deasupra rolurilor selectate. Helper/Moderator rămân manuale. La repetare, se reutilizează rolurile și mesajul din același canal. Vezi și `/roles_setup` pentru alegerea manuală a altor roluri.
+
 ## Validare înainte de utilizare
 
 Testează cu un membru obișnuit și un moderator: formular pentru fiecare tip, categorie corectă, ping staff, lipsa accesului altor membri, blocarea unui al doilea tichet, preluare, adăugare/eliminare participant și redenumire. Repornește serviciul și verifică panoul/butoanele existente. Închide cu motiv: descarcă HTML și verifică mesajele și motivul, precum și lipsa accesului autorului/participanților. Redeschide și verifică accesul, preluarea resetată și statisticile. Un membru obișnuit nu trebuie să poată folosi controalele de staff. Testează și eliberarea/transferul între doi colegi, prioritatea, suspendarea/deblocarea, feedbackul din DM și `/ticket_health`. Verifică existența unei copii în `data/backups/`. Închiderea automată rămâne oprită până configurezi intenționat duratele.
@@ -174,7 +211,7 @@ Backupul dinaintea actualizării se păstrează pentru recuperare manuală cu se
 ```bash
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python -m compileall -q bot.py store.py transcript.py operations.py fivem.py applications.py community.py deploy
+python -m compileall -q bot.py store.py transcript.py operations.py fivem.py applications.py community.py server_setup.py deploy
 ```
 
 Testele folosesc SQLite real și interacțiuni Discord simulate. Nu înlocuiesc validarea pe server și nu folosesc tokenuri.
