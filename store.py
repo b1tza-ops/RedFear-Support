@@ -29,6 +29,16 @@ class Store:
           staff INTEGER, score INTEGER NOT NULL CHECK(score BETWEEN 1 AND 5), created REAL NOT NULL,
           PRIMARY KEY(channel,cycle));
         ''')
+        self.db.executescript('''
+        CREATE TABLE IF NOT EXISTS helper_applications (
+          id INTEGER PRIMARY KEY, owner INTEGER NOT NULL, answers TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending', created REAL NOT NULL,
+          review_channel INTEGER NOT NULL, reviewer_role INTEGER NOT NULL,
+          message INTEGER, reviewed_at REAL, reviewed_by INTEGER, reason TEXT,
+          dm_state INTEGER NOT NULL DEFAULT 0);
+        CREATE UNIQUE INDEX IF NOT EXISTS one_pending_helper
+          ON helper_applications(owner) WHERE status='pending';
+        ''')
         columns = {r['name'] for r in self.db.execute('PRAGMA table_info(tickets)')}
         for name, definition in [('closed_at', 'REAL'), ('closed_by', 'INTEGER'), ('reason', 'TEXT'), ('priority', "TEXT NOT NULL DEFAULT 'normal'"),
                                  ('last_activity', 'REAL'), ('warned_at', 'REAL'),
@@ -199,3 +209,62 @@ class Store:
 
     def feedback_stats(self):
         return self.db.execute('SELECT staff,COUNT(*) AS count,AVG(score) AS average FROM feedback GROUP BY staff').fetchall()
+
+
+    def helper_latest(self, owner):
+        return self.db.execute('SELECT * FROM helper_applications WHERE owner=? ORDER BY id DESC LIMIT 1',(owner,)).fetchone()
+
+    def helper_application(self, number):
+        return self.db.execute('SELECT * FROM helper_applications WHERE id=?',(number,)).fetchone()
+
+    def helper_card(self, channel, message):
+        return self.db.execute('SELECT * FROM helper_applications WHERE review_channel=? AND message=?',(channel,message)).fetchone()
+
+    def helper_eligible(self, owner, cooldown, now=None):
+        now=time.time() if now is None else now
+        pending=self.db.execute("SELECT id FROM helper_applications WHERE owner=? AND status='pending'",(owner,)).fetchone()
+        if pending:
+            raise ValueError(f'Ai deja aplicația #{pending["id"]} în așteptare.')
+        last=self.helper_latest(owner)
+        if last and now-last['created'] < 60:
+            raise ValueError('Așteaptă un minut înainte să trimiți din nou.')
+        decision=self.db.execute("SELECT MAX(reviewed_at) FROM helper_applications WHERE owner=? AND status IN ('accepted','rejected')",(owner,)).fetchone()[0]
+        if decision is not None and now < decision+cooldown:
+            raise ValueError('Perioada de așteptare pentru o nouă aplicație nu s-a încheiat.')
+
+    def helper_create(self, owner, answers, channel, role, cooldown, now=None):
+        now=time.time() if now is None else now
+        with self.db:
+            self.helper_eligible(owner,cooldown,now)
+            cursor=self.db.execute('INSERT INTO helper_applications(owner,answers,created,review_channel,reviewer_role) VALUES(?,?,?,?,?)',
+                                   (owner,answers,now,channel,role))
+        return cursor.lastrowid
+
+    def helper_set_message(self, number, message):
+        with self.db:
+            self.db.execute('UPDATE helper_applications SET message=? WHERE id=?',(message,number))
+
+    def helper_delivery_failed(self, number):
+        with self.db:
+            self.db.execute("UPDATE helper_applications SET status='failed' WHERE id=? AND status='pending' AND message IS NULL",(number,))
+
+    def helper_reviewer_role(self, channel, role):
+        with self.db:
+            self.db.execute("UPDATE helper_applications SET reviewer_role=? WHERE review_channel=?",(role,channel))
+
+    def helper_decide(self, number, actor, status, reason, now=None):
+        if status not in ('accepted','rejected') or not 3 <= len(reason) <= 1000:
+            raise ValueError('Decizie sau motiv invalid.')
+        with self.db:
+            row=self.helper_application(number)
+            if not row or row['status'] != 'pending' or row['message'] is None:
+                raise ValueError('Aplicația nu mai este în așteptare sau nu a fost publicată.')
+            if row['owner'] == actor:
+                raise ValueError('Nu poți evalua propria aplicație.')
+            self.db.execute("UPDATE helper_applications SET status=?,reviewed_at=?,reviewed_by=?,reason=? WHERE id=? AND status='pending'",
+                (status,time.time() if now is None else now,actor,reason,number))
+        return self.helper_application(number)
+
+    def helper_dm(self, number, state):
+        with self.db:
+            self.db.execute('UPDATE helper_applications SET dm_state=? WHERE id=?',(state,number))
