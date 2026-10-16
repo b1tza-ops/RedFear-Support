@@ -16,6 +16,7 @@ from fivem import FiveM
 from community import Community, CommunityRoles
 from server_setup import ServerSetup
 from moderation import Moderation
+from casino import Casino, BlackjackButton
 from applications import Applications, HelperPanel, HelperReview
 
 load_dotenv()
@@ -184,7 +185,7 @@ class ClosedControls(SafeView):
         await self.bot.reopen_ticket(i)
 
 
-class Bot(Moderation, ServerSetup, Community, Applications, FiveM, Operations, discord.Client):
+class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Operations, discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -207,6 +208,8 @@ class Bot(Moderation, ServerSetup, Community, Applications, FiveM, Operations, d
         self.community_lock = asyncio.Lock()
         self.layout_lock = asyncio.Lock()
         self.moderation_lock = asyncio.Lock()
+        self.casino_lock = asyncio.Lock()
+        self.casino_recovered = []
         self.last_backup = max((p.stat().st_mtime for p in (data / 'backups').glob('[0-9]' * 8 + 'T*.sqlite3')), default=0)
         self.lock = asyncio.Lock()
         self.cooldowns = {}
@@ -219,6 +222,7 @@ class Bot(Moderation, ServerSetup, Community, Applications, FiveM, Operations, d
         self.init_community()
         self.register_server_setup()
         self.register_moderation()
+        self.register_casino()
 
     async def command_error(self, i, error):
         await report(i, getattr(error, 'original', error))
@@ -292,6 +296,8 @@ class Bot(Moderation, ServerSetup, Community, Applications, FiveM, Operations, d
             await reply(i, 'Butoane publicate.')
 
     async def setup_hook(self):
+        self.casino_recovered = self.store.casino_recover()
+        self.add_dynamic_items(BlackjackButton)
         for view in (Panel(self), Controls(self), ClosedControls(self), HelperPanel(self), HelperReview(self), CommunityRoles(self)):
             self.add_view(view)
         guild = discord.Object(id=self.guild_id)
@@ -302,11 +308,13 @@ class Bot(Moderation, ServerSetup, Community, Applications, FiveM, Operations, d
         self.maintenance.start()
         self.fivem_poll.start()
         self.community_flush.start()
+        self.casino_poll.start()
 
     async def close(self):
         self.maintenance.cancel()
         self.fivem_poll.cancel()
         self.community_flush.cancel()
+        self.casino_poll.cancel()
         await super().close()
 
     def staff(self, member):

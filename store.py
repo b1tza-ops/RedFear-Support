@@ -1,9 +1,10 @@
 import secrets
 import sqlite3
 import time
+from casino_store import CasinoStore
 
 
-class Store:
+class Store(CasinoStore):
     def __init__(self, path):
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
@@ -47,6 +48,7 @@ class Store:
           until_time REAL, log_state INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS moderation_target ON moderation_cases(target,id);
         ''')
+        self.casino_schema()
         columns = {r['name'] for r in self.db.execute('PRAGMA table_info(tickets)')}
         for name, definition in [('closed_at', 'REAL'), ('closed_by', 'INTEGER'), ('reason', 'TEXT'), ('priority', "TEXT NOT NULL DEFAULT 'normal'"),
                                  ('last_activity', 'REAL'), ('warned_at', 'REAL'),
