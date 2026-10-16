@@ -259,6 +259,20 @@ La **restart**, mesele încă active sunt anulate și mizele rezervate sunt rest
 
 Validare pe server: creează masa, intră cu încă un membru și verifică turele, Trage/Stai/Dublează, bonusul o dată pe 24h, soldurile, anularea și refundul după restart. Nu folosi premii sau cumpărări cu valoare reală cu acest sistem.
 
+## Categorie pentru tichete închise
+
+După export și închidere, botul mută automat canalul în **🔒 TICHETE ÎNCHISE**, cu acces explicit numai pentru suport, bot și administratori. ID-ul este salvat; nu adoptă categorii doar după nume. Când sunt 50 de canale într-o categorie, creează următoarea categorie privată numerotată. Nu șterge mesaje și nu schimbă numerotarea tichetelor.
+
+Pentru tichetele deja închise, un administrator rulează o singură dată (se poate repeta pentru retry):
+
+```text
+/ticket_archive_closed
+```
+
+Mută numai canalele înregistrate în SQLite ca închise, niciodată canale deschise sau canalul HTML de arhivă. Canalele vechi care nu există în baza de date nu sunt adoptate după numele `inchis-*`. Rezultatul arată câte canale au fost organizate, câte lipsesc și câte au dat eroare. Proprietarul și administratorii continuă să vadă canalele private; categoria poate fi restrânsă în lista Discord.
+
+La redeschidere, canalul revine în categoria configurată pentru tipul său sau în categoria implicită de tichete, cu accesul autorului și participanților restabilit. Dacă destinația lipsește, rămâne închis. O eroare la mutarea după o închidere reușită este înregistrată în jurnal; tichetul rămâne închis și privat, fără repetarea exportului sau a închiderii. Reîncearcă mutarea cu comanda de mai sus după corectarea permisiunilor. Botul are nevoie de Manage Channels și de permisiunile pentru crearea categoriei/setarea accesului.
+
 ## Validare înainte de utilizare
 
 Testează cu un membru obișnuit și un moderator: formular pentru fiecare tip, categorie corectă, ping staff, lipsa accesului altor membri, blocarea unui al doilea tichet, preluare, adăugare/eliminare participant și redenumire. Repornește serviciul și verifică panoul/butoanele existente. Închide cu motiv: descarcă HTML și verifică mesajele și motivul, precum și lipsa accesului autorului/participanților. Redeschide și verifică accesul, preluarea resetată și statisticile. Un membru obișnuit nu trebuie să poată folosi controalele de staff. Testează și eliberarea/transferul între doi colegi, prioritatea, suspendarea/deblocarea, feedbackul din DM și `/ticket_health`. Verifică existența unei copii în `data/backups/`. Închiderea automată rămâne oprită până configurezi intenționat duratele.

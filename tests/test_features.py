@@ -102,7 +102,11 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.owner, self.staff_member, self.extra = member(1), member(2, True), member(3)
         self.everyone, self.role, self.bot_member = MagicMock(spec=discord.Role), MagicMock(spec=discord.Role), member(4)
         self.role.mention = '<@&400>'
-        self.guild = NS(default_role=self.everyone, me=self.bot_member, get_role=lambda r:self.role)
+        self.category = MagicMock(spec=discord.CategoryChannel)
+        self.category.id = 200
+        self.guild = NS(default_role=self.everyone, me=self.bot_member, get_role=lambda r:self.role,
+                        get_channel=lambda n:self.category if n == 200 else None,
+                        fetch_channels=AsyncMock(return_value=[]), create_category=AsyncMock(return_value=self.category))
         self.channel = NS(id=10, name='tichet-0001', overwrites={self.owner:discord.PermissionOverwrite(**dict(view_channel=True, send_messages=True)), self.extra:discord.PermissionOverwrite(view_channel=True,send_messages=True)},
                           edit=AsyncMock(), send=AsyncMock())
         self.i = NS(guild_id=100, channel_id=10, user=self.staff_member, guild=self.guild, channel=self.channel,
@@ -129,7 +133,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
             for item in modal.children:
                 self.assertLessEqual(len(item.label),45)
                 self.assertLessEqual(len(item.placeholder),100)
-        self.assertEqual({c.name for c in self.bot.tree.get_commands()}, {'ticket_panel','ticket_controls','ticket_categories','ticket_stats','ticket_health','ticket_block','ticket_unblock','ticket_idle','ticket_backup','fivem_setup','fivem_status','fivem_stop','helper_setup','helper_toggle','helper_status','helper_republish','helper_resend','welcome_setup','welcome_toggle','welcome_test','roles_setup','community_logs','community_logs_stop','server_map','server_setup','roles_create_defaults','moderation_setup','warn','warnings','mod_history','mod_case','timeout','untimeout','kick','ban','mod_log_retry','casino_setup','casino_stop','blackjack','casino_profile','casino_daily','casino_top'})
+        self.assertEqual({c.name for c in self.bot.tree.get_commands()}, {'ticket_panel','ticket_controls','ticket_categories','ticket_stats','ticket_health','ticket_block','ticket_unblock','ticket_idle','ticket_backup','fivem_setup','fivem_status','fivem_stop','helper_setup','helper_toggle','helper_status','helper_republish','helper_resend','welcome_setup','welcome_toggle','welcome_test','roles_setup','community_logs','community_logs_stop','server_map','server_setup','roles_create_defaults','moderation_setup','warn','warnings','mod_history','mod_case','timeout','untimeout','kick','ban','mod_log_retry','casino_setup','casino_stop','blackjack','casino_profile','casino_daily','casino_top','ticket_archive_closed'})
 
     async def test_no_manage_roles_overwrite(self):
         overwrites = self.bot.overwrites(self.guild,[self.role],self.owner)

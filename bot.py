@@ -295,6 +295,52 @@ class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Opera
             await i.channel.send('Administrare tichet', view=Controls(self) if row['status'] == 'open' else ClosedControls(self))
             await reply(i, 'Butoane publicate.')
 
+        @self.tree.command(name='ticket_archive_closed', description='Mută tichetele deja închise în categoria privată dedicată')
+        @app_commands.guild_only()
+        @app_commands.default_permissions(administrator=True)
+        async def archive_closed(i: discord.Interaction):
+            self.admin(i)
+            await i.response.defer(ephemeral=True, thinking=True)
+            moved = missing = failed = 0
+            async with self.lock:
+                rows = self.store.db.execute("SELECT * FROM tickets WHERE status='closed' AND channel IS NOT NULL").fetchall()
+                for row in rows:
+                    try:
+                        channel = await i.guild.fetch_channel(row['channel'])
+                        if not isinstance(channel, discord.TextChannel) or channel.id == self.archive_id:
+                            failed += 1
+                            continue
+                        await self.move_closed_ticket(i.guild, channel)
+                        moved += 1
+                    except discord.NotFound:
+                        missing += 1
+                    except Exception:
+                        failed += 1
+                        log.exception('Nu am putut muta tichetul închis %s', row['id'])
+            await reply(i, f'Tichete închise organizate: {moved}. Canale inexistente: {missing}. Erori: {failed}. Nu s-au șters mesaje.')
+
+    async def closed_ticket_category(self, guild, channel_id):
+        channels = await guild.fetch_channels()
+        saved = self.community_config('closed-categories') or []
+        categories = {c.id: c for c in channels if isinstance(c, discord.CategoryChannel)}
+        for number in reversed(saved):
+            category = categories.get(number)
+            count = sum(c.category_id == number and c.id != channel_id for c in channels if not isinstance(c, discord.CategoryChannel))
+            if category and count < 50:
+                return category
+        suffix = f' {len(saved)+1}' if saved else ''
+        category = await guild.create_category('🔒 TICHETE ÎNCHISE' + suffix,
+            overwrites=self.overwrites(guild, self.support_roles(guild)), reason='Arhivă privată pentru canalele închise')
+        saved.append(category.id)
+        self.save_community('closed-categories', saved)
+        return category
+
+    async def move_closed_ticket(self, guild, channel):
+        category = await self.closed_ticket_category(guild, channel.id)
+        # Explicit staff-only permissions; never sync with a parent category.
+        await channel.edit(category=category, sync_permissions=False,
+            overwrites=self.overwrites(guild, self.support_roles(guild)), reason='Organizare tichet închis')
+
     async def setup_hook(self):
         self.casino_recovered = self.store.casino_recover()
         self.add_dynamic_items(BlackjackButton)
@@ -465,6 +511,11 @@ class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Opera
                 log.exception('Nu am putut restaura permisiunile după export eșuat')
             raise
         try:
+            await self.move_closed_ticket(guild, channel)
+        except Exception:
+            # Export and closure already succeeded; do not reopen on a cosmetic move failure.
+            log.exception('Tichet închis și privat, dar mutarea în categoria de închise a eșuat')
+        try:
             await channel.send('🔒 Tichet închis. Conversația a fost salvată în arhiva privată.', view=ClosedControls(self))
         except discord.HTTPException:
             log.exception('Închidere reușită, dar mesajul de confirmare nu a fost trimis')
@@ -492,11 +543,16 @@ class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Opera
                     continue
             old = dict(i.channel.overwrites)
             old_name = i.channel.name
-            await i.channel.edit(name=f'tichet-{row["id"]:04d}', overwrites=self.overwrites(i.guild, self.support_roles(i.guild), owner, participants))
+            old_category = getattr(i.channel, 'category', None)
+            category_id = int(self.store.setting('category:' + row['kind']) or self.category_id)
+            category = i.guild.get_channel(category_id)
+            if not isinstance(category, discord.CategoryChannel):
+                raise ValueError('Categoria pentru acest tip de tichet lipsește; tichetul rămâne închis.')
+            await i.channel.edit(name=f'tichet-{row["id"]:04d}', category=category, sync_permissions=False, overwrites=self.overwrites(i.guild, self.support_roles(i.guild), owner, participants))
             try:
                 self.store.reopen(i.channel_id, i.user.id)
             except Exception:
-                await i.channel.edit(name=old_name, overwrites=old)
+                await i.channel.edit(name=old_name, category=old_category, sync_permissions=False, overwrites=old)
                 raise
             await reply(i, 'Tichet redeschis; preluarea a fost resetată.')
             await i.channel.send(f'🔓 Tichet redeschis de {i.user.mention}.', view=Controls(self))
