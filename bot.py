@@ -13,6 +13,8 @@ from store import Store
 from transcript import export_parts
 from operations import Operations, TransferModal, RatingView, PRIORITIES
 from fivem import FiveM
+from community import Community, CommunityRoles
+from server_setup import ServerSetup
 from applications import Applications, HelperPanel, HelperReview
 
 load_dotenv()
@@ -181,10 +183,11 @@ class ClosedControls(SafeView):
         await self.bot.reopen_ticket(i)
 
 
-class Bot(Applications, FiveM, Operations, discord.Client):
+class Bot(ServerSetup, Community, Applications, FiveM, Operations, discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.members = True
         super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none())
         self.guild_id = number('GUILD_ID')
         self.category_id = number('TICKET_CATEGORY_ID')
@@ -200,6 +203,8 @@ class Bot(Applications, FiveM, Operations, discord.Client):
         self.backup_lock = asyncio.Lock()
         self.fivem_lock = asyncio.Lock()
         self.applications_lock = asyncio.Lock()
+        self.community_lock = asyncio.Lock()
+        self.layout_lock = asyncio.Lock()
         self.last_backup = max((p.stat().st_mtime for p in (data / 'backups').glob('[0-9]' * 8 + 'T*.sqlite3')), default=0)
         self.lock = asyncio.Lock()
         self.cooldowns = {}
@@ -209,6 +214,8 @@ class Bot(Applications, FiveM, Operations, discord.Client):
         self.register_operations()
         self.register_fivem()
         self.register_applications()
+        self.init_community()
+        self.register_server_setup()
 
     async def command_error(self, i, error):
         await report(i, getattr(error, 'original', error))
@@ -282,7 +289,7 @@ class Bot(Applications, FiveM, Operations, discord.Client):
             await reply(i, 'Butoane publicate.')
 
     async def setup_hook(self):
-        for view in (Panel(self), Controls(self), ClosedControls(self), HelperPanel(self), HelperReview(self)):
+        for view in (Panel(self), Controls(self), ClosedControls(self), HelperPanel(self), HelperReview(self), CommunityRoles(self)):
             self.add_view(view)
         guild = discord.Object(id=self.guild_id)
         self.tree.copy_global_to(guild=guild)
@@ -291,10 +298,12 @@ class Bot(Applications, FiveM, Operations, discord.Client):
             self.add_view(RatingView(self,invite['token']))
         self.maintenance.start()
         self.fivem_poll.start()
+        self.community_flush.start()
 
     async def close(self):
         self.maintenance.cancel()
         self.fivem_poll.cancel()
+        self.community_flush.cancel()
         await super().close()
 
     def staff(self, member):
