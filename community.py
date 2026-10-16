@@ -48,6 +48,9 @@ class Community:
         # These are notification/member labels, never moderation or private-access roles.
         helper = self.helper_config()
         protected = set(self.roles)
+        moderation = self.community_config('moderation')
+        if moderation:
+            protected.update(moderation.values())
         if helper:
             protected.add(helper['reviewer_role'])
         if (role is None or role.guild.id != self.guild_id or role.is_default() or role.managed or role.id in protected
