@@ -11,6 +11,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 from store import Store
 from transcript import export_parts
+from operations import Operations, TransferModal, RatingView, PRIORITIES
 
 load_dotenv()
 log = logging.getLogger('redfear')
@@ -151,6 +152,21 @@ class Controls(SafeView):
         await self.modal(i, 'rename')
 
 
+    @discord.ui.button(label='Eliberează', custom_id='redfear:release:v3', row=2)
+    async def release(self, i, button):
+        await self.bot.release_ticket(i)
+
+    @discord.ui.button(label='Transferă', custom_id='redfear:transfer:v3', row=2)
+    async def transfer(self, i, button):
+        self.bot.require_staff(i,'open')
+        await i.response.send_modal(TransferModal(self.bot))
+
+    @discord.ui.select(custom_id='redfear:priority:v3', placeholder='Prioritatea tichetului',
+                       options=[discord.SelectOption(label=label,value=key) for key,(label,color) in PRIORITIES.items()], row=3)
+    async def priority(self, i, select):
+        await self.bot.priority_ticket(i,select.values[0])
+
+
 class ClosedControls(SafeView):
     def __init__(self, bot):
         super().__init__(timeout=None)
@@ -163,7 +179,7 @@ class ClosedControls(SafeView):
         await self.bot.reopen_ticket(i)
 
 
-class Bot(discord.Client):
+class Bot(Operations, discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -176,12 +192,17 @@ class Bot(discord.Client):
             raise ValueError('SUPPORT_ROLE_IDS trebuie să conțină roluri de staff, nu @everyone')
         data = Path(os.getenv('DATA_DIR', 'data'))
         data.mkdir(parents=True, exist_ok=True)
-        self.store = Store(data / 'tickets.sqlite3')
+        self.data_path = data
+        self.database_path = data / 'tickets.sqlite3'
+        self.store = Store(self.database_path)
+        self.backup_lock = asyncio.Lock()
+        self.last_backup = max((p.stat().st_mtime for p in (data / 'backups').glob('[0-9]' * 8 + 'T*.sqlite3')), default=0)
         self.lock = asyncio.Lock()
         self.cooldowns = {}
         self.tree = app_commands.CommandTree(self)
         self.tree.error(self.command_error)
         self.register_commands()
+        self.register_operations()
 
     async def command_error(self, i, error):
         await report(i, getattr(error, 'original', error))
@@ -194,6 +215,8 @@ class Bot(discord.Client):
         row = self.ticket(i)
         if not row or not self.staff(i.user) or (status and row['status'] != status):
             raise ValueError('Acțiune rezervată staffului; verifică starea tichetului.')
+        if status == 'open' and row['claimed'] is not None and row['claimed'] != i.user.id and not i.user.guild_permissions.administrator:
+            raise ValueError('Tichet preluat de alt coleg. Numai acesta sau un administrator îl poate administra.')
         return row
 
     def register_commands(self):
@@ -237,6 +260,8 @@ class Bot(discord.Client):
             text = f"Deschise: {counts.get('open', 0)}\nÎnchise: {counts.get('closed', 0)}\nTotal: {sum(counts.values())}\n\nActivitate staff (preluări / închideri):\n"
             lines = [f"<@{r['actor']}> — {r['claims']} / {r['closes']}" for r in staff]
             # Attach full report to avoid silently dropping large teams.
+            ratings = self.store.feedback_stats()
+            lines += [f'Evaluări pentru {r["staff"] or "neatribuit"}: {r["average"]:.1f}/5 ({r["count"]} evaluări)' for r in ratings]
             report_text = text + '\n'.join(lines)
             await i.response.send_message(report_text[:1800] if len(report_text) <= 1800 else text + 'Raport complet atașat.',
                                           file=discord.File(io.BytesIO(report_text.encode()), filename='statistici.txt'), ephemeral=True)
@@ -256,6 +281,13 @@ class Bot(discord.Client):
         guild = discord.Object(id=self.guild_id)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
+        for invite in self.store.pending_feedback():
+            self.add_view(RatingView(self,invite['token']))
+        self.maintenance.start()
+
+    async def close(self):
+        self.maintenance.cancel()
+        await super().close()
 
     def staff(self, member):
         return isinstance(member, discord.Member) and (member.guild_permissions.administrator or any(r.id in self.roles for r in member.roles))
@@ -286,6 +318,8 @@ class Bot(discord.Client):
         if i.guild_id != self.guild_id or kind not in KINDS:
             raise ValueError('Server sau tip de tichet invalid.')
         async with self.lock:
+            if self.store.blocked(i.user.id):
+                raise ValueError('Accesul tău la crearea tichetelor este suspendat. Contactează administrația serverului.')
             active = self.store.active(i.user.id)
             if active:
                 try:
@@ -364,43 +398,58 @@ class Bot(discord.Client):
             row = self.ticket(i)
             if not row or row['status'] != 'open' or (row['owner'] != i.user.id and not self.staff(i.user)):
                 raise ValueError('Tichet închis sau acces refuzat.')
-            archive = await self.archive_channel(i.guild, i.channel_id)
-            original = dict(i.channel.overwrites)
-            frozen = dict(original)
-            # Freeze every non-staff participant, including legacy member overwrites.
-            for target, overwrite in original.items():
-                if isinstance(target, discord.Member) and not target.bot and not self.staff(target):
-                    frozen[target] = discord.PermissionOverwrite.from_pair(*overwrite.pair())
-                    frozen[target].send_messages = False
-                    frozen[target].send_messages_in_threads = False
-            try:
-                await i.channel.edit(overwrites=frozen)
-                summary = (f'Tichet #{row["id"]:04d} • canal {i.channel_id} • {row["kind"]}\n'
-                           f'Autor: {row["owner"]}\nÎnchis de: {i.user.id}\nMotiv: {reason}\n'
-                           'Exportul include mesajele existente. Linkurile atașamentelor pot expira.')
-                index = 0
-                async for part in export_parts(i.channel, summary):
-                    index += 1
-                    await archive.send(f'Arhivă #{row["id"]:04d} • partea {index} • autor {row["owner"]} • închis de {i.user.id}',
-                        file=discord.File(io.BytesIO(part), filename=f'tichet-{row["id"]:04d}-{index}.html'))
-                # Closed channels retain only staff/bot access, not participants.
-                closed_overwrites = self.overwrites(i.guild, self.support_roles(i.guild))
-                await i.channel.edit(name=f'inchis-{row["id"]:04d}', overwrites=closed_overwrites)
-                self.store.close(i.channel_id, i.user.id, reason)
-            except Exception:
-                # Leave an open ticket usable if export/network fails. Partial archive
-                # posts may remain; retries are explicitly labelled by their timestamps.
-                try:
-                    await i.channel.edit(overwrites=original)
-                except discord.HTTPException:
-                    log.exception('Nu am putut restaura permisiunile după export eșuat')
-                raise
+            if row['owner'] != i.user.id:
+                self.require_staff(i,'open')
+            await self.close_locked(i.guild,i.channel,row,i.user.id,reason)
             await reply(i, 'Tichet închis și arhivat.')
-            await i.channel.send('🔒 Tichet închis. Conversația a fost salvată în arhiva privată.', view=ClosedControls(self))
+
+    async def close_locked(self, guild, channel, row, actor_id, reason):
+        # Caller holds self.lock, whether closure comes from a human or maintenance.
+        archive = await self.archive_channel(guild, channel.id)
+        original = dict(channel.overwrites)
+        frozen = dict(original)
+        # Freeze every non-staff participant, including legacy member overwrites.
+        for target, overwrite in original.items():
+            if isinstance(target, discord.Member) and not target.bot and not self.staff(target):
+                frozen[target] = discord.PermissionOverwrite.from_pair(*overwrite.pair())
+                frozen[target].send_messages = False
+                frozen[target].send_messages_in_threads = False
+        try:
+            await channel.edit(overwrites=frozen)
+            summary = (f'Tichet #{row["id"]:04d} • canal {channel.id} • {row["kind"]}\n'
+                       f'Autor: {row["owner"]}\nPreluat de: {row["claimed"]}\nPrioritate: {row["priority"]}\nÎnchis de: {actor_id}\nMotiv: {reason}\n'
+                       'Exportul include mesajele existente. Linkurile atașamentelor pot expira.')
+            index = 0
+            async for part in export_parts(channel, summary):
+                index += 1
+                await archive.send(f'Arhivă #{row["id"]:04d} • partea {index} • autor {row["owner"]} • închis de {actor_id}',
+                    file=discord.File(io.BytesIO(part), filename=f'tichet-{row["id"]:04d}-{index}.html'))
+            # Closed channels retain only staff/bot access, not participants.
+            closed_overwrites = self.overwrites(guild, self.support_roles(guild))
+            await channel.edit(name=f'inchis-{row["id"]:04d}', overwrites=closed_overwrites)
+            self.store.close(channel.id, actor_id, reason)
+        except Exception:
+            # Leave an open ticket usable if export/network fails. Partial archive
+            # posts may remain; retries are explicitly labelled by their timestamps.
+            try:
+                await channel.edit(overwrites=original)
+            except discord.HTTPException:
+                log.exception('Nu am putut restaura permisiunile după export eșuat')
+            raise
+        try:
+            await channel.send('🔒 Tichet închis. Conversația a fost salvată în arhiva privată.', view=ClosedControls(self))
+        except discord.HTTPException:
+            log.exception('Închidere reușită, dar mesajul de confirmare nu a fost trimis')
+        try:
+            await self.send_feedback(guild,channel.id)
+        except Exception:
+            log.exception('Închidere reușită, dar invitația de feedback a eșuat')
 
     async def reopen_ticket(self, i):
         async with self.lock:
             row = self.require_staff(i, 'closed')
+            if self.store.blocked(row['owner']):
+                raise ValueError('Autorul are accesul la tichete suspendat; deblochează-l înainte de redeschidere.')
             if self.store.active(row['owner']):
                 raise ValueError('Autorul are deja un tichet deschis. Închide-l înainte de redeschidere.')
             try:

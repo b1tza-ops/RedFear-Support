@@ -108,6 +108,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.i = NS(guild_id=100, channel_id=10, user=self.staff_member, guild=self.guild, channel=self.channel,
                     response=NS(is_done=lambda:True), followup=NS(send=AsyncMock()))
         self.bot.store.create(1,10,'Ajutor',1)
+        self.bot.send_feedback = AsyncMock()
         self.archive = NS(send=AsyncMock())
         self.bot.archive_channel = AsyncMock(return_value=self.archive)
         async def history(**kwargs):
@@ -128,7 +129,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
             for item in modal.children:
                 self.assertLessEqual(len(item.label),45)
                 self.assertLessEqual(len(item.placeholder),100)
-        self.assertEqual({c.name for c in self.bot.tree.get_commands()}, {'ticket_panel','ticket_controls','ticket_categories','ticket_stats'})
+        self.assertEqual({c.name for c in self.bot.tree.get_commands()}, {'ticket_panel','ticket_controls','ticket_categories','ticket_stats','ticket_health','ticket_block','ticket_unblock','ticket_idle','ticket_backup'})
 
     async def test_no_manage_roles_overwrite(self):
         overwrites = self.bot.overwrites(self.guild,[self.role],self.owner)
