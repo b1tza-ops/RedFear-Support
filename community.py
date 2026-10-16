@@ -150,9 +150,12 @@ class Community:
         previous = {role.id for role in before.roles}
         current = {role.id for role in after.roles}
         if previous != current:
-            added = ', '.join(str(x) for x in sorted(current-previous)) or '—'
-            removed = ', '.join(str(x) for x in sorted(previous-current)) or '—'
-            self.queue_community(after.guild.id, 'Roluri modificate', f'Membru ID: {after.id}\nAdăugate (ID): {added}\nEliminate (ID): {removed}')
+            roles = {role.id: role for role in (*before.roles, *after.roles)}
+            def names(ids):
+                return ', '.join(discord.utils.escape_markdown(roles[x].name[:60]) for x in sorted(ids)) or '—'
+            name = discord.utils.escape_markdown(str(getattr(after, 'display_name', after))[:80])
+            self.queue_community(after.guild.id, 'Roluri modificate',
+                f'Membru: <@{after.id}> • {name}\nID membru: {after.id}\nAdăugate: {names(current-previous)}\nEliminate: {names(previous-current)}')
 
     async def toggle_community_role(self, i, slot):
         async with self.community_lock:

@@ -145,7 +145,8 @@ class CommunityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.bot.community_events),0)
         embed=self.room.send.await_args.kwargs['embed']
         self.assertEqual(len(embed.fields),2)
-        self.assertIn('500',embed.fields[1].value)
+        self.assertIn('Evenimente',embed.fields[1].value)
+        self.assertIn('Membru: <@1>',embed.fields[1].value)
         self.assertNotIn('content',embed.to_dict())
 
     async def test_logs_do_not_send_on_failed_privacy_and_retry(self):
