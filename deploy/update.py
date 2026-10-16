@@ -11,7 +11,7 @@ import tempfile
 
 SOURCE = Path(__file__).resolve().parent.parent
 TARGET = Path('/opt/redfear-support')
-FILES = ('bot.py', 'store.py', 'transcript.py', 'operations.py', 'requirements.txt')
+FILES = ('bot.py', 'store.py', 'transcript.py', 'operations.py', 'fivem.py', 'requirements.txt')
 
 
 def run(*args):
@@ -52,7 +52,7 @@ def main():
             with sqlite3.connect(db) as source, sqlite3.connect(backup / 'tickets.sqlite3') as dest:
                 source.backup(dest)
         # Dependencies are unchanged in this release. Use the existing environment.
-        run(str(TARGET / '.venv/bin/python'), '-c', 'import discord, dotenv')
+        run(str(TARGET / '.venv/bin/python'), '-c', 'import discord, dotenv, aiohttp')
         for name in FILES:
             fd, temporary = tempfile.mkstemp(prefix='.update-', dir=TARGET)
             try:

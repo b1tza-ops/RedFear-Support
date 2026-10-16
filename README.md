@@ -87,6 +87,27 @@ Pentru dezactivarea închiderii automate:
 
 Nu există un timer extern: acestea rulează numai când serviciul botului este pornit și conectat la Discord. Cât botul este oprit, nu se trimit avertizări și nu se închid tichete. Backupul și verificările nu înlocuiesc monitorizarea VPS-ului.
 
+## Panou status FiveM
+
+Administratorul configurează panoul în Discord:
+
+```text
+/fivem_setup endpoint:IP_PUBLIC:30120 channel:#status-server join_link:https://cfx.re/join/COD
+```
+
+Înlocuiește exemplele cu adresa reală și codul de conectare. `endpoint` acceptă IP:port sau domeniu public; fără schemă și fără port se folosește HTTP pe 30120. Pentru un proxy HTTPS, folosește URL-ul de bază, de exemplu `https://play.example.com`. Nu include `/dynamic.json`, parametri, credențiale sau tokenuri. Localhost, LAN și adrese speciale sunt refuzate; rezolvarea DNS verifică de asemenea că adresele sunt publice. Redirecționările HTTP sunt refuzate.
+
+`join_link` acceptă linkul oficial `https://cfx.re/join/COD` sau numai codul. Este opțional la configurare: fără el se afișează comanda F8, iar butonul apare după ce linkul este adăugat prin aceeași comandă. Linkul nu este ghicit din IP. Repetarea configurării în același canal actualizează mesajul existent. Mutarea în alt canal încearcă să dezactiveze panoul vechi; dacă botul nu mai are acces, șterge-l manual.
+
+- Mesajul arată starea endpointului, numărul de jucători/locuri, numele serverului, ora ultimei verificări și butonul de conectare atunci când există linkul cfx.re.
+- Aproximativ la 60 secunde se citește numai endpointul public `/dynamic.json` și se editează același mesaj. Nu se descarcă liste de jucători/identificatori și nu se folosește RCON. Maximum 8 secunde per cerere și 64 KB per răspuns.
+- **Indisponibil** înseamnă server oprit SAU status inaccesibil (firewall, endpoint blocat, DNS, răspuns invalid). Nu este dovada că jocul este sigur offline. Nu se afișează numere vechi de jucători ca fiind actuale. Butonul poate rămâne disponibil: conectarea la joc poate funcționa chiar dacă endpointul de status este blocat.
+- Configurarea și ultimul rezultat rămân în SQLite după restart. `/fivem_status` arată privat ultima verificare, cu ora ei, fără a declanșa cereri suplimentare; respectă accesul utilizatorului la canalul panoului. Dacă botul este oprit, ora rămâne veche și panoul nu se actualizează.
+- `/fivem_stop`, numai pentru administratori, oprește panoul și încearcă eliminarea butonului; **nu oprește serverul de joc**.
+- Dacă mesajul/canalul este șters, botul nu postează automat înlocuitori la fiecare minut. Rulează `/fivem_setup` din nou pentru recreare. Botul are nevoie de View Channel, Send Messages, Embed Links și Read Message History în canal.
+
+Implementare bazată pe endpointurile publice descrise în [documentația Cfx.re](https://docs.fivem.net/docs/server-manual/proxy-setup/) și câmpurile din [InfoHttpHandler.cpp](https://github.com/citizenfx/fivem/blob/master/code/components/citizen-server-impl/src/InfoHttpHandler.cpp). Nu sunt necesare chei de licență sau tokenuri de jucători.
+
 ## Validare înainte de utilizare
 
 Testează cu un membru obișnuit și un moderator: formular pentru fiecare tip, categorie corectă, ping staff, lipsa accesului altor membri, blocarea unui al doilea tichet, preluare, adăugare/eliminare participant și redenumire. Repornește serviciul și verifică panoul/butoanele existente. Închide cu motiv: descarcă HTML și verifică mesajele și motivul, precum și lipsa accesului autorului/participanților. Redeschide și verifică accesul, preluarea resetată și statisticile. Un membru obișnuit nu trebuie să poată folosi controalele de staff. Testează și eliberarea/transferul între doi colegi, prioritatea, suspendarea/deblocarea, feedbackul din DM și `/ticket_health`. Verifică existența unei copii în `data/backups/`. Închiderea automată rămâne oprită până configurezi intenționat duratele.
@@ -106,7 +127,7 @@ Backupul dinaintea actualizării se păstrează pentru recuperare manuală cu se
 ```bash
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python -m compileall -q bot.py store.py transcript.py operations.py deploy
+python -m compileall -q bot.py store.py transcript.py operations.py fivem.py deploy
 ```
 
 Testele folosesc SQLite real și interacțiuni Discord simulate. Nu înlocuiesc validarea pe server și nu folosesc tokenuri.

@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from store import Store
 from transcript import export_parts
 from operations import Operations, TransferModal, RatingView, PRIORITIES
+from fivem import FiveM
 
 load_dotenv()
 log = logging.getLogger('redfear')
@@ -179,7 +180,7 @@ class ClosedControls(SafeView):
         await self.bot.reopen_ticket(i)
 
 
-class Bot(Operations, discord.Client):
+class Bot(FiveM, Operations, discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -196,6 +197,7 @@ class Bot(Operations, discord.Client):
         self.database_path = data / 'tickets.sqlite3'
         self.store = Store(self.database_path)
         self.backup_lock = asyncio.Lock()
+        self.fivem_lock = asyncio.Lock()
         self.last_backup = max((p.stat().st_mtime for p in (data / 'backups').glob('[0-9]' * 8 + 'T*.sqlite3')), default=0)
         self.lock = asyncio.Lock()
         self.cooldowns = {}
@@ -203,6 +205,7 @@ class Bot(Operations, discord.Client):
         self.tree.error(self.command_error)
         self.register_commands()
         self.register_operations()
+        self.register_fivem()
 
     async def command_error(self, i, error):
         await report(i, getattr(error, 'original', error))
@@ -284,9 +287,11 @@ class Bot(Operations, discord.Client):
         for invite in self.store.pending_feedback():
             self.add_view(RatingView(self,invite['token']))
         self.maintenance.start()
+        self.fivem_poll.start()
 
     async def close(self):
         self.maintenance.cancel()
+        self.fivem_poll.cancel()
         await super().close()
 
     def staff(self, member):

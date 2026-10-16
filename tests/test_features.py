@@ -129,7 +129,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
             for item in modal.children:
                 self.assertLessEqual(len(item.label),45)
                 self.assertLessEqual(len(item.placeholder),100)
-        self.assertEqual({c.name for c in self.bot.tree.get_commands()}, {'ticket_panel','ticket_controls','ticket_categories','ticket_stats','ticket_health','ticket_block','ticket_unblock','ticket_idle','ticket_backup'})
+        self.assertEqual({c.name for c in self.bot.tree.get_commands()}, {'ticket_panel','ticket_controls','ticket_categories','ticket_stats','ticket_health','ticket_block','ticket_unblock','ticket_idle','ticket_backup','fivem_setup','fivem_status','fivem_stop'})
 
     async def test_no_manage_roles_overwrite(self):
         overwrites = self.bot.overwrites(self.guild,[self.role],self.owner)
