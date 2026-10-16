@@ -177,6 +177,22 @@ class Community:
                 text = f'Rol acordat: {role.name}.'
             await reply(i, text)
 
+    async def publish_community_roles(self, channel, selected):
+        old = self.community_config('roles')
+        message = None
+        if old and old['channel'] == channel.id:
+            try:
+                message = await channel.fetch_message(old['message'])
+            except discord.NotFound:
+                pass
+        embed = discord.Embed(title='🎭 RedFear • Roluri opționale', description='Apasă pentru a adăuga sau elimina un rol de notificări.\n' + '\n'.join(r.name for r in selected), color=0xDC2626)
+        if message:
+            await message.edit(embed=embed, view=CommunityRoles(self, selected))
+        else:
+            message = await channel.send(embed=embed, view=CommunityRoles(self, selected), allowed_mentions=discord.AllowedMentions.none())
+        self.save_community('roles', dict(channel=channel.id, message=message.id, roles=[r.id for r in selected]))
+        # Previous panels are invalidated by the stored message ID, even if they cannot be edited.
+
     def register_community(self):
         @self.tree.command(name='welcome_setup', description='Configurează mesajul de bun venit și un rol simplu automat')
         @app_commands.guild_only()
@@ -230,20 +246,7 @@ class Community:
                     raise ValueError('Alege un canal din server și roluri distincte.')
                 for role in selected:
                     self.safe_community_role(i.guild, role)
-                old = self.community_config('roles')
-                message = None
-                if old and old['channel'] == channel.id:
-                    try:
-                        message = await channel.fetch_message(old['message'])
-                    except discord.NotFound:
-                        pass
-                embed = discord.Embed(title='🎭 RedFear • Roluri opționale', description='Apasă pentru a adăuga sau elimina un rol de notificări.\n' + '\n'.join(r.name for r in selected), color=0xDC2626)
-                if message:
-                    await message.edit(embed=embed, view=CommunityRoles(self, selected))
-                else:
-                    message = await channel.send(embed=embed, view=CommunityRoles(self, selected), allowed_mentions=discord.AllowedMentions.none())
-                self.save_community('roles', dict(channel=channel.id, message=message.id, roles=[r.id for r in selected]))
-                # Previous panels are invalidated by the stored message ID, even if they cannot be edited.
+                await self.publish_community_roles(channel, selected)
             await reply(i, 'Panoul de roluri este activ. Panourile vechi din alte canale nu mai funcționează.')
 
         @self.tree.command(name='community_logs', description='Creează/configurează camera privată pentru loguri de membri și roluri')
