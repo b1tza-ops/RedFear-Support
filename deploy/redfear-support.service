@@ -1,0 +1,21 @@
+[Unit]
+Description=RedFear Support Discord bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=redfear
+Group=redfear
+WorkingDirectory=/opt/redfear-support
+ExecStart=/opt/redfear-support/.venv/bin/python bot.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/redfear-support/data
+
+[Install]
+WantedBy=multi-user.target
