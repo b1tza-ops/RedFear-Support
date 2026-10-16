@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -9,10 +10,20 @@ import discord
 from discord import app_commands
 from dotenv import load_dotenv
 from store import Store
+from transcript import export_parts
 
 load_dotenv()
 log = logging.getLogger('redfear')
 KINDS = ['Ajutor', 'Reclamație', 'Contestație', 'Bug']
+CATEGORY_NAMES = {'Ajutor': '🎫 AJUTOR', 'Reclamație': '🚨 RECLAMAȚII', 'Contestație': '⚖️ CONTESTAȚII', 'Bug': '🐛 BUGURI'}
+QUESTIONS = {
+    'Ajutor': [('Cu ce ai nevoie de ajutor?', 'Descrie problema și ce ai încercat.'), ('Numele tău în joc / ID', 'Opțional')],
+    'Reclamație': [('Pe cine reclami? Nume / ID', 'Numele sau ID-ul persoanei'), ('Ce s-a întâmplat?', 'Descrie faptele, data și ora.'), ('Dovezi / linkuri', 'Poți atașa fișiere după deschiderea tichetului.')],
+    'Contestație': [('Numele tău în joc / ID', 'Numele sau ID-ul contului sancționat'), ('Sancțiune și motivul contestației', 'Ce sancțiune ai primit și de ce o contești?'), ('Data / staff / dovezi', 'Informații suplimentare, dacă le ai.')],
+    'Bug': [('Ce problemă ai găsit?', 'Comportament observat și comportament așteptat'), ('Pași pentru reproducere', 'Cum putem reproduce problema?'), ('Locație / oră / dovezi', 'Informații suplimentare, dacă le ai.')],
+}
+ACCESS = dict(view_channel=True, send_messages=True, read_message_history=True, attach_files=True, embed_links=True)
+
 
 def number(name):
     value = int(os.environ[name])
@@ -20,68 +31,137 @@ def number(name):
         raise ValueError(f'{name} trebuie să fie un ID pozitiv')
     return value
 
+
+async def reply(i, text):
+    if i.response.is_done():
+        await i.followup.send(text, ephemeral=True)
+    else:
+        await i.response.send_message(text, ephemeral=True)
+
+
+async def report(i, error):
+    log.error('Interacțiune eșuată', exc_info=(type(error), error, error.__traceback__))
+    if isinstance(error, discord.Forbidden):
+        text = 'Botul nu are acces sau permisiuni suficiente. Verifică rolul botului și categoria/canalul.'
+    elif isinstance(error, ValueError):
+        text = str(error)
+    else:
+        text = 'Operația nu a reușit. Anunță un administrator și verifică logul botului.'
+    await reply(i, text)
+
+
 class SafeView(discord.ui.View):
     async def on_error(self, interaction, error, item):
-        log.exception('Interacțiune eșuată', exc_info=error)
-        msg = 'Operația nu a reușit. Anunță un administrator; poți încerca din nou.'
-        if interaction.response.is_done():
-            await interaction.followup.send(msg, ephemeral=True)
-        else:
-            await interaction.response.send_message(msg, ephemeral=True)
+        await report(interaction, error)
 
-class TicketModal(discord.ui.Modal, title='RedFear • Deschide tichet'):
-    details = discord.ui.TextInput(label='Descrie problema', style=discord.TextStyle.paragraph, min_length=10, max_length=1800)
+
+class SafeModal(discord.ui.Modal):
+    async def on_error(self, interaction, error):
+        await report(interaction, error)
+
+
+class TicketModal(SafeModal, title='RedFear • Deschide tichet'):
     def __init__(self, bot, kind):
         super().__init__()
         self.bot, self.kind = bot, kind
+        for index, (label, hint) in enumerate(QUESTIONS[kind]):
+            self.add_item(discord.ui.TextInput(label=label, placeholder=hint, style=discord.TextStyle.paragraph,
+                                              required=index == 0 or (index == 1 and kind != 'Ajutor'),
+                                              min_length=3, max_length=900))
+
     async def on_submit(self, i):
         await i.response.defer(ephemeral=True, thinking=True)
-        try:
-            await self.bot.open_ticket(i, self.kind, str(self.details))
-        except Exception:
-            log.exception('Creare tichet eșuată')
-            await i.followup.send('Nu am putut crea tichetul. Contactează un administrator.', ephemeral=True)
+        details = '\n\n'.join(f'{item.label}\n{item.value}' for item in self.children if item.value)
+        await self.bot.open_ticket(i, self.kind, details)
+
 
 class Panel(SafeView):
     def __init__(self, bot):
         super().__init__(timeout=None)
         self.bot = bot
+
     @discord.ui.select(custom_id='redfear:open:v1', placeholder='🎫 Alege motivul tichetului', options=[discord.SelectOption(label=k, value=k) for k in KINDS])
     async def choose(self, i, select):
         if i.guild_id != self.bot.guild_id:
-            return await i.response.send_message('Server neautorizat.', ephemeral=True)
+            return await reply(i, 'Server neautorizat.')
         await i.response.send_modal(TicketModal(self.bot, select.values[0]))
 
-class Confirm(SafeView):
-    def __init__(self, bot, requester):
-        super().__init__(timeout=60)
-        self.bot, self.requester = bot, requester
-    @discord.ui.button(label='Confirmă închiderea', style=discord.ButtonStyle.danger)
-    async def yes(self, i, button):
-        if i.user.id != self.requester:
-            return await i.response.send_message('Confirmarea aparține altui utilizator.', ephemeral=True)
+
+class CloseModal(SafeModal, title='Confirmă închiderea tichetului'):
+    reason = discord.ui.TextInput(label='Motiv / cum a fost rezolvat?', style=discord.TextStyle.paragraph, min_length=3, max_length=1000)
+
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, i):
         await i.response.defer(ephemeral=True, thinking=True)
-        await self.bot.close_ticket(i)
+        await self.bot.close_ticket(i, str(self.reason))
+
+
+class StaffModal(SafeModal):
+    def __init__(self, bot, action):
+        super().__init__(title={'add': 'Adaugă participant', 'remove': 'Elimină participant', 'rename': 'Redenumește tichetul'}[action])
+        self.bot, self.action = bot, action
+        self.value = discord.ui.TextInput(label='Nume nou' if action == 'rename' else 'ID Discord al membrului', max_length=70 if action == 'rename' else 22)
+        self.add_item(self.value)
+
+    async def on_submit(self, i):
+        await i.response.defer(ephemeral=True, thinking=True)
+        await self.bot.manage_ticket(i, self.action, str(self.value))
+
 
 class Controls(SafeView):
     def __init__(self, bot):
         super().__init__(timeout=None)
         self.bot = bot
+
     @discord.ui.button(label='Preia tichetul', emoji='🙋', custom_id='redfear:claim:v1')
     async def claim(self, i, button):
-        row = self.bot.ticket(i)
-        if not row or row['status'] != 'open' or not self.bot.staff(i.user):
-            return await i.response.send_message('Doar echipa de suport poate prelua un tichet deschis.', ephemeral=True)
-        if self.bot.store.claim(i.channel_id, i.user.id):
-            await i.response.send_message(f'Tichet preluat de {i.user.mention}.', allowed_mentions=discord.AllowedMentions.none())
-        else:
-            await i.response.send_message('Tichetul este deja preluat.', ephemeral=True)
+        await i.response.defer(ephemeral=True, thinking=True)
+        async with self.bot.lock:
+            row = self.bot.require_staff(i, 'open')
+            if self.bot.store.claim(row['channel'], i.user.id):
+                await i.channel.send(f'Tichet preluat de {i.user.mention}.', allowed_mentions=discord.AllowedMentions.none())
+                await reply(i, 'Ai preluat tichetul.')
+            else:
+                await reply(i, 'Tichetul este deja preluat.')
+
     @discord.ui.button(label='Închide', emoji='🔒', style=discord.ButtonStyle.danger, custom_id='redfear:close:v1')
     async def close(self, i, button):
         row = self.bot.ticket(i)
-        if not row or (row['owner'] != i.user.id and not self.bot.staff(i.user)):
-            return await i.response.send_message('Nu ai acces la această acțiune.', ephemeral=True)
-        await i.response.send_message('Închidem tichetul și salvăm conversația? Canalul va rămâne ca arhivă pentru staff.', view=Confirm(self.bot, i.user.id), ephemeral=True)
+        if not row or row['status'] != 'open' or (row['owner'] != i.user.id and not self.bot.staff(i.user)):
+            return await reply(i, 'Nu ai acces sau tichetul este deja închis.')
+        await i.response.send_modal(CloseModal(self.bot))
+
+    async def modal(self, i, action):
+        self.bot.require_staff(i, 'open')
+        await i.response.send_modal(StaffModal(self.bot, action))
+
+    @discord.ui.button(label='Adaugă membru', custom_id='redfear:add:v2', row=1)
+    async def add(self, i, button):
+        await self.modal(i, 'add')
+
+    @discord.ui.button(label='Elimină membru', custom_id='redfear:remove:v2', row=1)
+    async def remove(self, i, button):
+        await self.modal(i, 'remove')
+
+    @discord.ui.button(label='Redenumește', custom_id='redfear:rename:v2', row=1)
+    async def rename(self, i, button):
+        await self.modal(i, 'rename')
+
+
+class ClosedControls(SafeView):
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    @discord.ui.button(label='Redeschide tichetul', emoji='🔓', custom_id='redfear:reopen:v2', style=discord.ButtonStyle.success)
+    async def reopen(self, i, button):
+        self.bot.require_staff(i, 'closed')
+        await i.response.defer(ephemeral=True, thinking=True)
+        await self.bot.reopen_ticket(i)
+
 
 class Bot(discord.Client):
     def __init__(self):
@@ -100,93 +180,250 @@ class Bot(discord.Client):
         self.lock = asyncio.Lock()
         self.cooldowns = {}
         self.tree = app_commands.CommandTree(self)
+        self.tree.error(self.command_error)
+        self.register_commands()
+
+    async def command_error(self, i, error):
+        await report(i, getattr(error, 'original', error))
+
+    def admin(self, i):
+        if i.guild_id != self.guild_id or not i.user.guild_permissions.administrator:
+            raise ValueError('Doar administratorii serverului configurat.')
+
+    def require_staff(self, i, status=None):
+        row = self.ticket(i)
+        if not row or not self.staff(i.user) or (status and row['status'] != status):
+            raise ValueError('Acțiune rezervată staffului; verifică starea tichetului.')
+        return row
+
+    def register_commands(self):
         @self.tree.command(name='ticket_panel', description='Publică panoul de suport RedFear')
         @app_commands.guild_only()
         @app_commands.default_permissions(administrator=True)
         async def panel(i: discord.Interaction):
-            if i.guild_id != self.guild_id or not i.user.guild_permissions.administrator:
-                return await i.response.send_message('Doar administratorii serverului configurat.', ephemeral=True)
-            await i.response.defer(ephemeral=True)
-            await i.channel.send(embed=discord.Embed(title='🎫 RedFear • Suport', description='Alege motivul de mai jos pentru un tichet privat.\nDescrie problema și atașează dovezi.\nAcces: tu, echipa de suport și administratorii.\nLa închidere, conversația este arhivată pentru staff.', color=0xDC2626), view=Panel(self))
-            await i.followup.send('Panou publicat.', ephemeral=True)
+            self.admin(i)
+            await i.response.defer(ephemeral=True, thinking=True)
+            await i.channel.send(embed=discord.Embed(title='🎫 RedFear • Suport', description='Alege motivul pentru un tichet privat.\nCompletează formularul și atașează dovezi în tichet.\nAcces: tu, participanții adăugați, suportul și administratorii.\nLa închidere salvăm conversația în arhiva privată.', color=0xDC2626), view=Panel(self))
+            await reply(i, 'Panou publicat.')
+
+        @self.tree.command(name='ticket_categories', description='Creează și configurează cele patru categorii private de suport')
+        @app_commands.guild_only()
+        @app_commands.default_permissions(administrator=True)
+        async def categories(i: discord.Interaction):
+            self.admin(i)
+            await i.response.defer(ephemeral=True, thinking=True)
+            async with self.lock:
+                roles = self.support_roles(i.guild)
+                for kind, name in CATEGORY_NAMES.items():
+                    saved = self.store.setting('category:' + kind)
+                    existing = i.guild.get_channel(int(saved)) if saved else None
+                    if existing is not None:
+                        if not isinstance(existing, discord.CategoryChannel):
+                            raise ValueError('Configurație categorie invalidă.')
+                        continue
+                    # Never adopt an unrelated category by name. Retry reuses persisted IDs.
+                    overwrites = self.overwrites(i.guild, roles)
+                    category = await i.guild.create_category(name, overwrites=overwrites, reason='Configurare RedFear Support')
+                    self.store.set_setting('category:' + kind, category.id)
+            await reply(i, 'Categorii private configurate: Ajutor, Reclamații, Contestații și Buguri. Tichetele noi sunt rutate automat.')
+
+        @self.tree.command(name='ticket_stats', description='Statistici tichete și activitatea echipei')
+        @app_commands.guild_only()
+        @app_commands.default_permissions(manage_channels=True)
+        async def stats(i: discord.Interaction):
+            if i.guild_id != self.guild_id or not self.staff(i.user):
+                raise ValueError('Doar echipa de suport.')
+            counts, staff = self.store.stats()
+            text = f"Deschise: {counts.get('open', 0)}\nÎnchise: {counts.get('closed', 0)}\nTotal: {sum(counts.values())}\n\nActivitate staff (preluări / închideri):\n"
+            lines = [f"<@{r['actor']}> — {r['claims']} / {r['closes']}" for r in staff]
+            # Attach full report to avoid silently dropping large teams.
+            report_text = text + '\n'.join(lines)
+            await i.response.send_message(report_text[:1800] if len(report_text) <= 1800 else text + 'Raport complet atașat.',
+                                          file=discord.File(io.BytesIO(report_text.encode()), filename='statistici.txt'), ephemeral=True)
+
+        @self.tree.command(name='ticket_controls', description='Reafișează butoanele în tichete existente')
+        @app_commands.guild_only()
+        @app_commands.default_permissions(manage_channels=True)
+        async def controls(i: discord.Interaction):
+            row = self.require_staff(i)
+            await i.response.defer(ephemeral=True, thinking=True)
+            await i.channel.send('Administrare tichet', view=Controls(self) if row['status'] == 'open' else ClosedControls(self))
+            await reply(i, 'Butoane publicate.')
+
     async def setup_hook(self):
-        self.add_view(Panel(self))
-        self.add_view(Controls(self))
+        for view in (Panel(self), Controls(self), ClosedControls(self)):
+            self.add_view(view)
         guild = discord.Object(id=self.guild_id)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
+
     def staff(self, member):
         return isinstance(member, discord.Member) and (member.guild_permissions.administrator or any(r.id in self.roles for r in member.roles))
+
     def ticket(self, i):
         return self.store.channel(i.channel_id) if i.guild_id == self.guild_id else None
+
+    def support_roles(self, guild):
+        roles = [guild.get_role(r) for r in self.roles]
+        if any(r is None for r in roles):
+            raise ValueError('Un rol de suport configurat nu mai există.')
+        return roles
+
+    def overwrites(self, guild, roles, owner=None, participants=()):
+        # MANAGE_ROLES must stay inherited from the guild role: Discord forbids
+        # non-admins explicitly granting that permission during channel creation.
+        result = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                  guild.me: discord.PermissionOverwrite(**ACCESS, manage_channels=True)}
+        result.update({r: discord.PermissionOverwrite(**ACCESS) for r in roles})
+        for member in ([owner] if owner else []) + list(participants):
+            result[member] = discord.PermissionOverwrite(**ACCESS)
+        return result
+
     async def on_ready(self):
         log.info('Conectat: %s; server %s', self.user, self.guild_id)
+
     async def open_ticket(self, i, kind, details):
+        if i.guild_id != self.guild_id or kind not in KINDS:
+            raise ValueError('Server sau tip de tichet invalid.')
         async with self.lock:
             active = self.store.active(i.user.id)
             if active:
                 try:
                     await i.guild.fetch_channel(active['channel'])
                 except discord.NotFound:
-                    self.store.close(active['channel'])
+                    self.store.close(active['channel'], reason='Canal șters extern')
                 else:
-                    return await i.followup.send(f'Ai deja un tichet: <#{active["channel"]}>', ephemeral=True)
+                    return await reply(i, f'Ai deja un tichet: <#{active["channel"]}>')
             now = time.monotonic()
             if now - self.cooldowns.get(i.user.id, -1000) < 60:
-                return await i.followup.send('Așteaptă un minut înainte de un tichet nou.', ephemeral=True)
-            category = i.guild.get_channel(self.category_id)
-            roles = [i.guild.get_role(r) for r in self.roles]
-            if not isinstance(category, discord.CategoryChannel) or any(r is None for r in roles):
-                raise ValueError('Categoria sau rolurile de suport nu există')
-            access = dict(view_channel=True, send_messages=True, read_message_history=True, attach_files=True, embed_links=True)
-            overwrites = {i.guild.default_role: discord.PermissionOverwrite(view_channel=False), i.user: discord.PermissionOverwrite(**access), i.guild.me: discord.PermissionOverwrite(**access, manage_channels=True, manage_roles=True)}
-            overwrites.update({r: discord.PermissionOverwrite(**access) for r in roles})
-            # Explicit overwrites prevent public category permissions leaking into a ticket.
-            channel = await i.guild.create_text_channel(f'tichet-{i.id}', category=category, overwrites=overwrites, topic=f'RedFear | autor={i.user.id} | tip={kind}', reason='Tichet de suport')
+                return await reply(i, 'Așteaptă un minut înainte de un tichet nou.')
+            category_id = int(self.store.setting('category:' + kind) or self.category_id)
+            category = i.guild.get_channel(category_id)
+            roles = self.support_roles(i.guild)
+            if not isinstance(category, discord.CategoryChannel):
+                raise ValueError('Categoria nu există. Rulează /ticket_categories sau verifică TICKET_CATEGORY_ID.')
+            number = self.store.next_number()
+            channel = await i.guild.create_text_channel(f'tichet-{number:04d}', category=category,
+                         overwrites=self.overwrites(i.guild, roles, i.user),
+                         topic=f'RedFear | autor={i.user.id} | tip={kind}', reason='Tichet de suport')
             try:
-                self.store.create(i.user.id, channel.id, kind, time.time())
+                self.store.create(i.user.id, channel.id, kind, time.time(), number=number)
             except Exception:
                 await channel.delete(reason='Creare în baza de date eșuată')
                 raise
             self.cooldowns[i.user.id] = now
-            await channel.send(content=i.user.mention, embed=discord.Embed(title=f'🎫 {kind}', description=details, color=0xDC2626), view=Controls(self))
-            await i.followup.send(f'Tichet creat: {channel.mention}', ephemeral=True)
-    async def close_ticket(self, i):
+            mentions = ' '.join(r.mention for r in roles)
+            await channel.send(content=f'{i.user.mention} {mentions}',
+                               embed=discord.Embed(title=f'🎫 #{number:04d} • {kind}', description=details, color=0xDC2626),
+                               view=Controls(self), allowed_mentions=discord.AllowedMentions(everyone=False, users=[i.user], roles=roles))
+            await reply(i, f'Tichet creat: {channel.mention}')
+
+    async def manage_ticket(self, i, action, value):
+        async with self.lock:
+            row = self.require_staff(i, 'open')
+            if action == 'rename':
+                name = re.sub(r'[^\w-]+', '-', value.lower(), flags=re.UNICODE).strip('-_')[:60]
+                if not name:
+                    raise ValueError('Introdu un nume valid.')
+                await i.channel.edit(name=f'tichet-{row["id"]:04d}-{name}', reason=f'Redenumit de {i.user.id}')
+                self.store.event(i.channel_id, 'rename', i.user.id, name)
+                return await reply(i, 'Tichet redenumit.')
+            if action not in ('add', 'remove') or not re.fullmatch(r'[1-9][0-9]{14,21}', value.strip()):
+                raise ValueError('Introdu un ID Discord numeric valid.')
+            member_id = int(value.strip())
+            if member_id == row['owner']:
+                raise ValueError('Autorul nu poate fi adăugat/eliminat prin acest buton.')
+            member = await i.guild.fetch_member(member_id)
+            if member.bot or self.staff(member):
+                raise ValueError('Acest buton este pentru participanți obișnuiți, nu staff sau boți.')
+            if action == 'remove' and member.id not in self.store.participants(i.channel_id):
+                raise ValueError('Membrul nu a fost adăugat ca participant.')
+            if action == 'add' and len(self.store.participants(i.channel_id)) >= 10:
+                raise ValueError('Maximum 10 participanți suplimentari per tichet.')
+            await i.channel.set_permissions(member, overwrite=discord.PermissionOverwrite(**ACCESS) if action == 'add' else None,
+                                            reason=f'Participant modificat de {i.user.id}')
+            self.store.participant(i.channel_id, member.id, action == 'add')
+            self.store.event(i.channel_id, action, i.user.id, str(member.id))
+            await i.channel.send(f'Participant {"adăugat" if action == "add" else "eliminat"}: {member.mention}.')
+            await reply(i, 'Participant actualizat.')
+
+    async def archive_channel(self, guild, current_id):
+        archive = await guild.fetch_channel(self.archive_id)
+        if not isinstance(archive, discord.TextChannel) or archive.id == current_id:
+            raise ValueError('Canal de arhivă invalid.')
+        for role in guild.roles:
+            if role.id not in self.roles and not role.permissions.administrator and not (role.is_bot_managed() and role in guild.me.roles) and archive.permissions_for(role).view_channel:
+                raise ValueError('Arhiva este vizibilă unui rol fără acces de suport.')
+        for target, overwrite in archive.overwrites.items():
+            if isinstance(target, discord.Member) and not target.bot and not self.staff(target) and archive.permissions_for(target).view_channel:
+                raise ValueError('Arhiva permite accesul unui membru fără rol de suport.')
+        return archive
+
+    async def close_ticket(self, i, reason):
         async with self.lock:
             row = self.ticket(i)
             if not row or row['status'] != 'open' or (row['owner'] != i.user.id and not self.staff(i.user)):
-                return await i.followup.send('Tichet închis sau acces refuzat.', ephemeral=True)
-            archive = await i.guild.fetch_channel(self.archive_id)
-            if not isinstance(archive, discord.TextChannel) or archive.id == i.channel_id:
-                raise ValueError('Canal de arhivă invalid')
-            # Fail closed if archive is visible to any ordinary role.
-            if archive.permissions_for(i.guild.default_role).view_channel:
-                raise ValueError('Arhiva trebuie să fie privată')
-            for role in i.guild.roles:
-                if role.id not in self.roles and not role.permissions.administrator and not role.is_bot_managed() and archive.permissions_for(role).view_channel:
-                    raise ValueError('Arhiva este vizibilă unui rol fără acces de suport')
-            # Freeze author writes before export, retaining an idempotent retry path.
-            owner = await i.guild.fetch_member(row['owner'])
-            overwrite = i.channel.overwrites_for(owner)
-            overwrite.send_messages = False
-            await i.channel.set_permissions(owner, overwrite=overwrite)
-            parts, current = [], f'RedFear | tichet {i.channel_id} | autor {row["owner"]}\n'
-            async for msg in i.channel.history(limit=None, oldest_first=True):
-                line = f'\n[{msg.created_at.isoformat()}] {msg.author} ({msg.author.id})\n{msg.content}\n'
-                line += '\n'.join(e.description or '' for e in msg.embeds)
-                line += '\n' + '\n'.join(a.url for a in msg.attachments) + '\n'
-                if len((current + line).encode()) > 1_000_000:
-                    parts.append(current); current = ''
-                current += line
-            parts.append(current)
-            for index, part in enumerate(parts, 1):
-                await archive.send(f'Arhivă tichet {i.channel_id} • partea {index}/{len(parts)} • închis de {i.user.id}', file=discord.File(io.BytesIO(part.encode()), filename=f'tichet-{i.channel_id}-{index}.txt'))
-            overwrite.view_channel = False
-            await i.channel.set_permissions(owner, overwrite=overwrite)
-            await i.channel.edit(name=f'inchis-{i.channel_id}')
-            self.store.close(i.channel_id)
-            await i.channel.send('🔒 Tichet închis. Conversația a fost salvată în arhiva privată.')
-            await i.followup.send('Tichet închis și arhivat.', ephemeral=True)
+                raise ValueError('Tichet închis sau acces refuzat.')
+            archive = await self.archive_channel(i.guild, i.channel_id)
+            original = dict(i.channel.overwrites)
+            frozen = dict(original)
+            # Freeze every non-staff participant, including legacy member overwrites.
+            for target, overwrite in original.items():
+                if isinstance(target, discord.Member) and not target.bot and not self.staff(target):
+                    frozen[target] = discord.PermissionOverwrite.from_pair(*overwrite.pair())
+                    frozen[target].send_messages = False
+                    frozen[target].send_messages_in_threads = False
+            try:
+                await i.channel.edit(overwrites=frozen)
+                summary = (f'Tichet #{row["id"]:04d} • canal {i.channel_id} • {row["kind"]}\n'
+                           f'Autor: {row["owner"]}\nÎnchis de: {i.user.id}\nMotiv: {reason}\n'
+                           'Exportul include mesajele existente. Linkurile atașamentelor pot expira.')
+                index = 0
+                async for part in export_parts(i.channel, summary):
+                    index += 1
+                    await archive.send(f'Arhivă #{row["id"]:04d} • partea {index} • autor {row["owner"]} • închis de {i.user.id}',
+                        file=discord.File(io.BytesIO(part), filename=f'tichet-{row["id"]:04d}-{index}.html'))
+                # Closed channels retain only staff/bot access, not participants.
+                closed_overwrites = self.overwrites(i.guild, self.support_roles(i.guild))
+                await i.channel.edit(name=f'inchis-{row["id"]:04d}', overwrites=closed_overwrites)
+                self.store.close(i.channel_id, i.user.id, reason)
+            except Exception:
+                # Leave an open ticket usable if export/network fails. Partial archive
+                # posts may remain; retries are explicitly labelled by their timestamps.
+                try:
+                    await i.channel.edit(overwrites=original)
+                except discord.HTTPException:
+                    log.exception('Nu am putut restaura permisiunile după export eșuat')
+                raise
+            await reply(i, 'Tichet închis și arhivat.')
+            await i.channel.send('🔒 Tichet închis. Conversația a fost salvată în arhiva privată.', view=ClosedControls(self))
+
+    async def reopen_ticket(self, i):
+        async with self.lock:
+            row = self.require_staff(i, 'closed')
+            if self.store.active(row['owner']):
+                raise ValueError('Autorul are deja un tichet deschis. Închide-l înainte de redeschidere.')
+            try:
+                owner = await i.guild.fetch_member(row['owner'])
+            except discord.NotFound:
+                raise ValueError('Autorul nu mai este pe server; tichetul rămâne arhivat.')
+            participants = []
+            for member_id in self.store.participants(i.channel_id):
+                try:
+                    participants.append(await i.guild.fetch_member(member_id))
+                except discord.NotFound:
+                    continue
+            old = dict(i.channel.overwrites)
+            old_name = i.channel.name
+            await i.channel.edit(name=f'tichet-{row["id"]:04d}', overwrites=self.overwrites(i.guild, self.support_roles(i.guild), owner, participants))
+            try:
+                self.store.reopen(i.channel_id, i.user.id)
+            except Exception:
+                await i.channel.edit(name=old_name, overwrites=old)
+                raise
+            await reply(i, 'Tichet redeschis; preluarea a fost resetată.')
+            await i.channel.send(f'🔓 Tichet redeschis de {i.user.mention}.', view=Controls(self))
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
