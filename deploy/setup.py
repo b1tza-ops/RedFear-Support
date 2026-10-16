@@ -57,7 +57,7 @@ def main():
         account = pwd.getpwnam('redfear')
     TARGET.mkdir(mode=0o750, exist_ok=True)
     os.chown(TARGET, account.pw_uid, account.pw_gid)
-    for filename in ('bot.py', 'store.py', 'transcript.py', 'operations.py', 'fivem.py', 'applications.py', 'requirements.txt'):
+    for filename in ('bot.py', 'store.py', 'transcript.py', 'operations.py', 'fivem.py', 'applications.py', 'community.py', 'requirements.txt'):
         dst = TARGET / filename
         if dst.is_symlink():
             raise ValueError('Fișier destinație nesigur')

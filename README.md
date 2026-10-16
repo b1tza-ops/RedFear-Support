@@ -17,7 +17,7 @@ Bot Discord în română pentru un singur server, Python 3.11+, discord.py, SQLi
 
 ## Discord: configurare
 
-Developer Portal → Bot: Message Content Intent activ; Presence și Members nu sunt necesare. OAuth2 scopes: `bot`, `applications.commands`.
+Developer Portal → Bot: **Message Content Intent și Server Members Intent active înainte de restart**. Presence nu este necesar. Fără Server Members Intent, această versiune nu se poate conecta la Gateway. OAuth2 scopes: `bot`, `applications.commands`.
 
 Permisiuni în **rolul botului din server**: View Channels, Manage Channels, Manage Roles, Send Messages, Embed Links, Attach Files, Read Message History. Opțional Mention Everyone pentru pingurile rolurilor de suport. Administrator nu este necesar. Bifele din calculatorul Developer Portal nu actualizează rolul existent.
 
@@ -131,6 +131,30 @@ Configurația, răspunsurile și deciziile rămân în SQLite și în backupuril
 
 Verifică după instalare cu un membru obișnuit: trimitere, lipsa accesului la camera privată, refuzul unei aplicații duplicate, decizie și DM. Repornește și verifică butoanele existente. Testează și DM blocat cu `/helper_status`.
 
+## Comunitate: prima etapă pentru înlocuirea Carl
+
+Aceste funcții sunt oprite până la configurare. Nu migrează setările/istoricul Carl și nu înlocuiesc încă moderarea sau anti-spamul. Dezactivează funcția echivalentă din Carl numai după verificare, ca să eviți mesaje și roluri duplicate.
+
+**Înainte de actualizare:** Developer Portal → aplicația botului → Bot → Privileged Gateway Intents → activează **Server Members Intent**, salvează. Păstrează Message Content Intent activ pentru tichete. Nu este nevoie de Presence Intent. Botul trebuie să aibă Manage Roles, iar rolul său să fie deasupra rolurilor pe care le acordă.
+
+```text
+/welcome_setup channel:#bun-venit message:Bine ai venit în comunitatea RedFear! role:@Membru
+/welcome_test
+/welcome_toggle enabled:False
+/roles_setup channel:#roluri role1:@Evenimente role2:@Update-uri
+/community_logs reviewer_role:@Moderator
+/community_logs_stop
+```
+
+- `welcome_setup` salvează textul exact (maximum 1500 caractere), canalul și opțional rolul automat. Nu există variabile sau cod executat în text; botul adaugă separat mențiunea noului membru, fără pinguri. Se aplică membrilor umani care intră de acum înainte, nu retroactiv tuturor. `welcome_test` trimite numai o previzualizare privată și nu acordă roluri. `welcome_toggle` controlează atât mesajul, cât și rolul automat. Dacă există Membership Screening, rolul așteaptă acceptarea regulilor.
+- **Folosește roluri existente când sunt potrivite; nu recrea Helper/Moderator.** Pentru acordare automată și butoane sunt acceptate numai roluri de etichetă/notificări: toate permisiunile de rol oprite, fără permisiuni pozitive în canale, nemanageriate și sub rolul botului. Rolurile de suport și rolul care evaluează aplicațiile sunt refuzate. Membrii moștenesc permisiunile obișnuite din @everyone. Rolurile de staff nu sunt self-service. Configurația și permisiunile sunt reverificate și la utilizare.
+- `roles_setup` acceptă 1–5 roluri distincte. Butonul adaugă rolul sau îl elimină dacă membrul îl are deja. În același canal se reutilizează mesajul; mutarea panoului invalidează butoanele celui vechi. Șterge manual panourile vechi din alte canale. La ștergerea mesajului, repetă comanda pentru recreare. Butoanele funcționează după restart.
+- `community_logs` creează camera dedicată **redfear-loguri**, fără reutilizarea unui canal găsit doar după nume. Acces: rolul ales, bot și administratori. La publicarea fiecărui lot înlocuiește integral permisiunile camerei; nu o folosi pentru alte conversații și nu adăuga alte roluri/membri acolo. Reconfigurarea reutilizează camera salvată. O cameră ștearsă se recreează numai prin comandă.
+- Logurile includ numai intrări/ieșiri și schimbări de roluri (ID-uri); nu includ mesaje, atașamente, conversații din tichete, răspunsuri la aplicații sau autorul presupus al unei modificări. Nu reprezintă încă un jurnal de moderare/audit complet. Se trimit în loturi la aproximativ 5 secunde. La lipsa accesului se reîncearcă în aceeași cameră; nu există fallback într-un canal public.
+- Coada este limitată la ultimele 200 de evenimente în memorie; evenimentele mai vechi la suprasarcină, cele din timpul opririi sau cele netrimise înainte de restart se pot pierde. Configurația rămâne în SQLite. Logurile Discord nu au ștergere automată. `community_logs_stop` oprește înregistrările noi și golește coada, păstrând camera și mesajele deja publicate.
+
+Verifică cu un membru de test: bun venit, screening, acordare/eliminare rol, lipsa accesului la loguri și funcționarea butoanelor după restart. În canalele publice botul are nevoie de View Channel, Send Messages și Embed Links; pentru reutilizarea mesajelor și Read Message History. Pentru camera privată are nevoie de gestionarea canalelor și a permisiunilor. Rolurile Helper/Moderator și recrutarea rămân separate.
+
 ## Validare înainte de utilizare
 
 Testează cu un membru obișnuit și un moderator: formular pentru fiecare tip, categorie corectă, ping staff, lipsa accesului altor membri, blocarea unui al doilea tichet, preluare, adăugare/eliminare participant și redenumire. Repornește serviciul și verifică panoul/butoanele existente. Închide cu motiv: descarcă HTML și verifică mesajele și motivul, precum și lipsa accesului autorului/participanților. Redeschide și verifică accesul, preluarea resetată și statisticile. Un membru obișnuit nu trebuie să poată folosi controalele de staff. Testează și eliberarea/transferul între doi colegi, prioritatea, suspendarea/deblocarea, feedbackul din DM și `/ticket_health`. Verifică existența unei copii în `data/backups/`. Închiderea automată rămâne oprită până configurezi intenționat duratele.
@@ -150,7 +174,7 @@ Backupul dinaintea actualizării se păstrează pentru recuperare manuală cu se
 ```bash
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python -m compileall -q bot.py store.py transcript.py operations.py fivem.py applications.py deploy
+python -m compileall -q bot.py store.py transcript.py operations.py fivem.py applications.py community.py deploy
 ```
 
 Testele folosesc SQLite real și interacțiuni Discord simulate. Nu înlocuiesc validarea pe server și nu folosesc tokenuri.
