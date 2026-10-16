@@ -13,6 +13,7 @@ from store import Store
 from transcript import export_parts
 from operations import Operations, TransferModal, RatingView, PRIORITIES
 from fivem import FiveM
+from applications import Applications, HelperPanel, HelperReview
 
 load_dotenv()
 log = logging.getLogger('redfear')
@@ -180,7 +181,7 @@ class ClosedControls(SafeView):
         await self.bot.reopen_ticket(i)
 
 
-class Bot(FiveM, Operations, discord.Client):
+class Bot(Applications, FiveM, Operations, discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -198,6 +199,7 @@ class Bot(FiveM, Operations, discord.Client):
         self.store = Store(self.database_path)
         self.backup_lock = asyncio.Lock()
         self.fivem_lock = asyncio.Lock()
+        self.applications_lock = asyncio.Lock()
         self.last_backup = max((p.stat().st_mtime for p in (data / 'backups').glob('[0-9]' * 8 + 'T*.sqlite3')), default=0)
         self.lock = asyncio.Lock()
         self.cooldowns = {}
@@ -206,6 +208,7 @@ class Bot(FiveM, Operations, discord.Client):
         self.register_commands()
         self.register_operations()
         self.register_fivem()
+        self.register_applications()
 
     async def command_error(self, i, error):
         await report(i, getattr(error, 'original', error))
@@ -279,7 +282,7 @@ class Bot(FiveM, Operations, discord.Client):
             await reply(i, 'Butoane publicate.')
 
     async def setup_hook(self):
-        for view in (Panel(self), Controls(self), ClosedControls(self)):
+        for view in (Panel(self), Controls(self), ClosedControls(self), HelperPanel(self), HelperReview(self)):
             self.add_view(view)
         guild = discord.Object(id=self.guild_id)
         self.tree.copy_global_to(guild=guild)

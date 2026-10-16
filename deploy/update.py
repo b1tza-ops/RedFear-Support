@@ -11,7 +11,7 @@ import tempfile
 
 SOURCE = Path(__file__).resolve().parent.parent
 TARGET = Path('/opt/redfear-support')
-FILES = ('bot.py', 'store.py', 'transcript.py', 'operations.py', 'fivem.py', 'requirements.txt')
+FILES = ('bot.py', 'store.py', 'transcript.py', 'operations.py', 'fivem.py', 'applications.py', 'requirements.txt')
 
 
 def run(*args):
