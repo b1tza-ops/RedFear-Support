@@ -224,6 +224,41 @@ Logul detaliat cu membrul, stafful, motivul și starea folosește camera privat�
 
 Nu sunt necesare alte Gateway Intents față de cele deja folosite de bot. Configurează separat Moderate Members/Kick Members/Ban Members pe rolul botului și pe Moderator, numai pentru acțiunile dorite. Nu acorda Administrator Helperilor. Validează pe conturi de test: Helper poate avertiza, nu poate sancționa; membrii obișnuiți nu pot vedea istoricul; o țintă cu rol mai înalt este refuzată. Anti-spamul și blocarea reclamelor nu fac parte din această etapă.
 
+## Blackjack multiplayer cu jetoane gratuite
+
+Prima etapă de mini-casino include **Blackjack**, solduri, bonus și clasament. Ruleta și păcănelele nu sunt implementate în această versiune. Jetoanele sunt fictive: fără cumpărare, transferuri, retrageri, schimb în bani sau bunuri FiveM și fără legătură cu economia serverului de joc.
+
+Administratorul rulează:
+
+```text
+/casino_setup
+```
+
+Fără canal selectat, prima configurare creează un canal **public** dedicat `🎰・casino`, numai pentru citire pentru @everyone, unde botul poate publica. La repetare reutilizează ID-ul salvat și mesajul cu reguli; nu adoptă un canal găsit doar după nume. Pentru un canal existent, selectează-l în opțiunea `channel`; permisiunile existente nu sunt schimbate. Botul are nevoie de View Channel, Send Messages, Embed Links și Read Message History; pentru crearea camerei, Manage Channels și permisiunea de a seta accesul. Nu sunt necesare alte Gateway Intents.
+
+```text
+/blackjack bet:50
+/casino_profile
+/casino_daily
+/casino_top
+/casino_stop
+```
+
+- O singură masă activă în canalul configurat, cu **1–5 jucători**. Gazda este înscrisă automat. Miza: 10–500 de jetoane, multiplu de 10, aceeași pentru toți la înscriere.
+- Înscriere timp de 60 secunde prin **Intră la masă**. **Renunță** restituie miza în lobby; dacă gazda renunță, masa întreagă este anulată și toți primesc miza înapoi. Numai gazda poate începe mai devreme. După 60 secunde mâna începe automat, inclusiv solo. Un membru poate fi la o singură masă activă; gazda poate crea cel mult o masă pe minut.
+- Fiecare jucător decide pe rând: **Trage**, **Stai**, **Dublează**. Dublarea necesită fonduri pentru încă o miză, numai la prima decizie, și trage exact o carte înainte de Stai. Fără split, insurance sau surrender. La 21 sau peste, tura se încheie automat.
+- Fiecare decizie are 45 secunde; expirarea aplică Stai. O verificare aproximativ la 5 secunde avansează masa. Tura următorului jucător primește un interval nou complet. Mâinile jucătorilor sunt publice; dealerul are o carte ascunsă până la încheiere. Dealerul stă la orice 17, inclusiv soft 17.
+- Blackjack natural (21 din primele două cărți) plătește 3:2 profit; câștig obișnuit 1:1; egalul restituie miza; înfrângerea o pierde. Un blackjack natural bate 21 din mai multe cărți. Dacă dealerul are blackjack, mâna se rezolvă imediat. Mesajul final arată miza totală, suma creditată (incluzând restituirea mizei, unde e cazul) și rezultatul net.
+- Cont nou: **1000 jetoane gratuite**. `/casino_daily` acordă 500 la fiecare **24 de ore**, fără cerințe de plată. `/casino_profile` arată soldul disponibil separat de miza rezervată și numărul de victorii/înfrângeri/egaluri. `/casino_top` arată primele 10 solduri disponibile; mizele rezervate nu sunt incluse. Nu există transferuri între membri sau cumpărare de jetoane.
+
+Soldurile, bonusurile, mesele și mizele rezervate sunt salvate în aceeași bază SQLite și incluse în backup. Rezervarea/dublarea și decontarea fiecărei mâini sunt tranzacționale; butoanele pentru decizii includ revizia mesei ca să refuze cererile vechi/duble. Pachetul de 52 de cărți este amestecat separat la fiecare mână cu `SystemRandom`; nu este o platformă de jocuri cu bani și nu oferă certificări de cazino.
+
+La **restart**, mesele încă active sunt anulate și mizele rezervate sunt restituite o singură dată; mâinile nu sunt reluate. După reconectare, botul încearcă actualizarea mesajelor vechi, iar butoanele vechi raportează anularea dacă mesajul nu a putut fi editat. Dacă publicarea sau actualizarea unei mese active eșuează, masa este anulată cu restituire. O mână deja decontată nu este plătită/refundată din nou dacă editarea rezultatului eșuează. Verifică soldul prin profil.
+
+`/casino_stop`, numai pentru administrator, oprește comenzile de joc și restituie toate mizele active; soldurile și statisticile rămân salvate. `/casino_setup` reactivează ulterior casino-ul. Schimbarea configurării este refuzată cât există o masă activă. Setările și istoricul local nu se șterg automat; administrația stabilește retenția. Nicio tranzacție distribuită cu mesajele Discord nu este pretinsă: baza de date este sursa soldurilor. Nu șterge baza de date ca să resetezi jocul, fiindcă include și tichetele/configurările.
+
+Validare pe server: creează masa, intră cu încă un membru și verifică turele, Trage/Stai/Dublează, bonusul o dată pe 24h, soldurile, anularea și refundul după restart. Nu folosi premii sau cumpărări cu valoare reală cu acest sistem.
+
 ## Validare înainte de utilizare
 
 Testează cu un membru obișnuit și un moderator: formular pentru fiecare tip, categorie corectă, ping staff, lipsa accesului altor membri, blocarea unui al doilea tichet, preluare, adăugare/eliminare participant și redenumire. Repornește serviciul și verifică panoul/butoanele existente. Închide cu motiv: descarcă HTML și verifică mesajele și motivul, precum și lipsa accesului autorului/participanților. Redeschide și verifică accesul, preluarea resetată și statisticile. Un membru obișnuit nu trebuie să poată folosi controalele de staff. Testează și eliberarea/transferul între doi colegi, prioritatea, suspendarea/deblocarea, feedbackul din DM și `/ticket_health`. Verifică existența unei copii în `data/backups/`. Închiderea automată rămâne oprită până configurezi intenționat duratele.
@@ -243,7 +278,7 @@ Backupul dinaintea actualizării se păstrează pentru recuperare manuală cu se
 ```bash
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python -m compileall -q bot.py store.py transcript.py operations.py fivem.py applications.py community.py server_setup.py moderation.py deploy
+python -m compileall -q bot.py store.py transcript.py operations.py fivem.py applications.py community.py server_setup.py moderation.py casino.py casino_store.py deploy
 ```
 
 Testele folosesc SQLite real și interacțiuni Discord simulate. Nu înlocuiesc validarea pe server și nu folosesc tokenuri.
