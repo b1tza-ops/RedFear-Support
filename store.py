@@ -47,6 +47,9 @@ class Store(CasinoStore):
           status TEXT NOT NULL DEFAULT 'pending', detail TEXT NOT NULL DEFAULT '',
           until_time REAL, log_state INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS moderation_target ON moderation_cases(target,id);
+        CREATE TABLE IF NOT EXISTS moderation_purge_messages (
+          case_id INTEGER NOT NULL, message INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+          PRIMARY KEY(case_id,message));
         ''')
         self.casino_schema()
         columns = {r['name'] for r in self.db.execute('PRAGMA table_info(tickets)')}
@@ -289,7 +292,7 @@ class Store(CasinoStore):
         return self.db.execute('SELECT * FROM moderation_cases WHERE id=?',(number,)).fetchone()
 
     def moderation_finish(self, number, status, detail=''):
-        if status not in ('applied','failed','uncertain'):
+        if status not in ('applied','failed','uncertain','partial'):
             raise ValueError('Stare invalidă pentru cazul de moderare.')
         with self.db:
             self.db.execute("UPDATE moderation_cases SET status=?,detail=? WHERE id=? AND status='pending'",(status,detail,number))
@@ -304,3 +307,35 @@ class Store(CasinoStore):
         condition=" AND action='warn' AND status='applied'" if warnings_only else ''
         return self.db.execute('SELECT * FROM moderation_cases WHERE target=?'+condition+' ORDER BY id DESC LIMIT 5 OFFSET ?',
                                (target,(page-1)*5)).fetchall()
+
+    def moderation_revoke_warn(self, number, actor, reason):
+        reason=reason.strip()
+        if not 3 <= len(reason) <= 500:
+            raise ValueError('Motiv obligatoriu de 3–500 caractere.')
+        with self.db:
+            row=self.moderation_case(number)
+            if not row or row['action']!='warn' or row['status']!='applied':
+                raise ValueError('Cazul nu este un avertisment activ sau a fost deja retras.')
+            cursor=self.db.execute("INSERT INTO moderation_cases(actor,target,action,reason,created,status,detail) VALUES(?,?,'warn_revoke',?,?,'applied',?)",
+                (actor,row['target'],reason,time.time(),f'Avertisment retras: #{number}.'))
+            audit=cursor.lastrowid
+            self.db.execute("UPDATE moderation_cases SET status='revoked',detail=? WHERE id=?",(f'Retras prin cazul #{audit}.',number))
+        return self.moderation_case(audit)
+
+    def moderation_purge_create(self, actor, channel, messages, reason):
+        if not 1<=len(messages)<=50 or len(set(messages))!=len(messages):
+            raise ValueError('Selecție invalidă pentru ștergere.')
+        with self.db:
+            cursor=self.db.execute("INSERT INTO moderation_cases(actor,target,action,reason,created) VALUES(?,?,'purge',?,?)",(actor,channel,reason,time.time()))
+            number=cursor.lastrowid
+            self.db.executemany('INSERT INTO moderation_purge_messages(case_id,message) VALUES(?,?)',[(number,m) for m in messages])
+        return number
+
+    def moderation_purge_update(self, number, message, status):
+        if status not in ('deleted','skipped','uncertain'):
+            raise ValueError('Stare invalidă pentru mesaj.')
+        with self.db:
+            self.db.execute('UPDATE moderation_purge_messages SET status=? WHERE case_id=? AND message=?',(status,number,message))
+
+    def moderation_purge_items(self, number):
+        return self.db.execute('SELECT * FROM moderation_purge_messages WHERE case_id=? ORDER BY message',(number,)).fetchall()

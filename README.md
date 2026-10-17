@@ -216,7 +216,7 @@ Nu creează roluri, nu atribuie membri și nu schimbă permisiunile Discord. Hel
 
 Motive obligatorii de 3–500 caractere. Rezultatele și istoricul sunt private pentru staff; avertismentul este o înregistrare internă, nu trimite automat DM candidatului. Moderatorii trebuie să aibă și permisiunile Discord native necesare; botul trebuie să le aibă separat. Pentru avertismente nu este nevoie de Moderate Members. Rolul staffului trebuie să fie deasupra rolului țintei (excepție proprietarul serverului), iar pentru sancțiuni native și rolul botului trebuie să fie deasupra. Propria persoană, boții, proprietarul și administratorii sunt protejați. Nu se acordă automat sancțiuni după un anumit număr de avertismente.
 
-Kick/ban cer un buton de confirmare valabil 2 minute și utilizabil numai de autorul cererii. La confirmare se recitesc membrii din Discord și se verifică din nou rolurile, permisiunile și ierarhia. Anularea sau expirarea nu aplică sancțiunea. Sunt acceptați numai membri încă prezenți pentru sancțiuni; istoricul se poate consulta și pentru utilizatori plecați selectabili în Discord. Unban se face momentan din setările Discord.
+Kick/ban cer un buton de confirmare valabil 2 minute și utilizabil numai de autorul cererii. La confirmare se recitesc membrii din Discord și se verifică din nou rolurile, permisiunile și ierarhia. Anularea sau expirarea nu aplică sancțiunea. Sunt acceptați numai membri încă prezenți pentru sancțiuni; istoricul se poate consulta și pentru utilizatori plecați selectabili în Discord. Unban poate fi făcut cu comanda descrisă mai jos sau din setările Discord.
 
 Cazul este salvat în SQLite **înainte** de apelul Discord. Stări: în curs, aplicat, refuzat, rezultat incert. O întrerupere/restart poate lăsa un caz în curs sau incert; verifică manual în Discord înainte să repeți. Nu se reexecută sancțiuni automat și nu se pretinde tranzacție atomică între Discord și SQLite. Istoricul este numai pentru acțiunile prin acest bot; nu importă sancțiuni Carl sau acțiuni manuale din Discord. Timeoutul expiră nativ în Discord, chiar dacă botul este oprit; expirarea nu creează un caz nou.
 
@@ -272,6 +272,28 @@ Pentru tichetele deja închise, un administrator rulează o singură dată (se p
 Mută numai canalele înregistrate în SQLite ca închise, niciodată canale deschise sau canalul HTML de arhivă. Canalele vechi care nu există în baza de date nu sunt adoptate după numele `inchis-*`. Rezultatul arată câte canale au fost organizate, câte lipsesc și câte au dat eroare. Proprietarul și administratorii continuă să vadă canalele private; categoria poate fi restrânsă în lista Discord.
 
 La redeschidere, canalul revine în categoria configurată pentru tipul său sau în categoria implicită de tichete, cu accesul autorului și participanților restabilit. Dacă destinația lipsește, rămâne închis. O eroare la mutarea după o închidere reușită este înregistrată în jurnal; tichetul rămâne închis și privat, fără repetarea exportului sau a închiderii. Reîncearcă mutarea cu comanda de mai sus după corectarea permisiunilor. Botul are nevoie de Manage Channels și de permisiunile pentru crearea categoriei/setarea accesului.
+
+## Completări pentru moderare: unban, retragere avertisment, curățare
+
+Folosesc aceeași configurație `/moderation_setup` și același log privat. Nu creează roluri, nu schimbă permisiuni și nu cer Gateway Intents suplimentare.
+
+```text
+/unban user_id:123456789012345678 reason:Contestație acceptată
+/warn_revoke case_id:12 reason:Avertisment acordat din greșeală
+/purge count:20 reason:Curățare spam
+```
+
+- **Unban:** Moderator/admin cu Ban Members, iar botul are nevoie separat de Ban Members. Introdu ID-ul numeric exact al utilizatorului banat; nu este nevoie să fie încă membru. Botul verifică existența banului și afișează confirmarea privată pentru acel ID și motiv. La confirmare verifică din nou accesul și banul. Nu trimite invitații sau mesaje private și nu readuce automat utilizatorul pe server. Fiecare rezultat are caz în SQLite; nu este reluat automat după erori/restart.
+- **Retragere avertisment:** numai Moderator/admin, cu motiv obligatoriu de 3–500 caractere. Acceptă numai un caz `warn` activ. Păstrează autorul și motivul original, marchează avertismentul drept retras și adaugă un caz separat, cu autorul/motivul retragerii și legătura către original, în aceeași tranzacție SQLite. O retragere repetată este refuzată. `/warnings` afișează numai avertismente active; `/mod_history` și `/mod_case` păstrează auditul complet. Mesajele vechi de log nu sunt rescrise; apare un log nou pentru retragere. Helper poate consulta istoricul, dar nu poate retrage avertismente.
+- **Curățare:** numai Moderator/admin cu **Manage Messages, View Channel și Read Message History în canal**; botul are nevoie de aceleași permisiuni. Verifică ultimele `count` mesaje (1–50), dintre care selectează numai mesajele umane obișnuite/răspunsurile, nefixate. Mesajele boților, webhookurilor și cele de sistem sunt excluse pentru protejarea panourilor. Numărul eligibil poate fi mai mic decât `count`.
+
+Curățarea este blocată în canale private (nevizibile pentru @everyone), tichete deschise/închise, categoriile de tichete/închise, arhiva HTML, camera aplicațiilor Helper și logul privat configurat. Nu se aplică în thread-uri. Botul nu citește/copiază conținutul în audit.
+
+Previzualizarea curățării arată canalul, numărul exact selectat și linkuri către primul/ultimul mesaj selectat, apoi cere confirmare explicită pentru **ștergere definitivă, fără recuperare**. Lista de ID-uri este înghețată: mesajele noi nu sunt incluse. Confirmarea este valabilă 2 minute numai pentru autor, în acel canal. La confirmare, rolurile/accesul/permisiunile și protecțiile canalului sunt reverificate. Fiecare mesaj este recitit înainte de ștergere; dacă a fost fixat între timp sau nu mai este eligibil, este omis. Mesajele deja șterse sunt omise, fără completarea selecției cu mesaje mai noi.
+
+Operațiile de ștergere sunt individuale, până la 50. La o eroare se opresc; ștergerile deja efectuate nu pot fi anulate. Cazul distinge succes, eșec, rezultat parțial sau incert, cu numărul de ștergeri confirmate. SQLite păstrează ID-ul și starea fiecărui mesaj selectat, **fără text sau atașamente**. `/mod_case` pentru acel caz include un fișier text cu ID-urile/stările. Cazurile purge țintesc canalul și se consultă prin numărul de caz, nu prin istoricul unui membru. Nu se reiau ștergeri automat după restart sau rezultat incert; `/mod_log_retry` retrimite numai logul.
+
+Testați întâi într-un canal public de test cu câteva mesaje fără valoare: previzualizare, anulare, fixarea unui mesaj înainte de confirmare și ștergerea selecției. Nu folosiți prima probă într-un canal cu mesaje importante. Istoricul și metadatele intră în backup și nu au ștergere automată; configurați retenția administrativ.
 
 ## Validare înainte de utilizare
 
