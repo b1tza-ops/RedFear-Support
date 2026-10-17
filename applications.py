@@ -78,6 +78,15 @@ class HelperReview(discord.ui.View):
     async def reject(self,i,button):
         await self.decide(i,'rejected')
 
+    @discord.ui.button(label='Invită la interviu',emoji='📅',style=discord.ButtonStyle.primary,custom_id='redfear:staff:interview:v1')
+    async def interview(self,i,button):
+        self.bot.require_owner(i)
+        row=self.bot.helper_require_reviewer(i)
+        if row['status']!='pending':
+            raise ValueError('Aplicația nu mai este în așteptare.')
+        from interviews import ScheduleInterviewModal
+        await i.response.send_modal(ScheduleInterviewModal(self.bot,row['id']))
+
     async def on_error(self,i,error,item):
         await self.bot.command_error(i,error)
 
@@ -298,8 +307,13 @@ class Applications:
         try:
             owner=await self.fetch_user(row['owner'])
             text=f'RedFear • Aplicația {STAFF_KINDS[row["kind"]][0]} #{row["id"]}: {LABELS[row["status"]]}.\nMotiv: {row["reason"]}'
+            trial=self.store.trial(row['id'])
+            if trial:
+                text+=f'\nPerioadă de probă: {trial["status"]}; până la <t:{int(trial["ends"])}:F>.'
+                if trial['result_reason']:
+                    text+='\nEvaluare finală: '+trial['result_reason']
             if row['status']=='accepted':
-                text+='\nConducerea te va contacta pentru discuție. Rolul va fi acordat manual.'
+                text+='\nRolurile sunt acordate manual de proprietar.'
             await owner.send(text,allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException:
             self.store.helper_dm(row['id'],-1)

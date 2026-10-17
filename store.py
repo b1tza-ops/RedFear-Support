@@ -1,3 +1,4 @@
+import json
 import secrets
 import sqlite3
 import time
@@ -54,6 +55,7 @@ class Store(CasinoStore):
         helper_columns = {r['name'] for r in self.db.execute('PRAGMA table_info(helper_applications)')}
         if 'kind' not in helper_columns:
             self.db.execute("ALTER TABLE helper_applications ADD COLUMN kind TEXT NOT NULL DEFAULT 'helper'")
+        self.interview_schema()
         self.casino_schema()
         columns = {r['name'] for r in self.db.execute('PRAGMA table_info(tickets)')}
         for name, definition in [('closed_at', 'REAL'), ('closed_by', 'INTEGER'), ('reason', 'TEXT'), ('priority', "TEXT NOT NULL DEFAULT 'normal'"),
@@ -344,3 +346,127 @@ class Store(CasinoStore):
 
     def moderation_purge_items(self, number):
         return self.db.execute('SELECT * FROM moderation_purge_messages WHERE case_id=? ORDER BY message',(number,)).fetchall()
+
+
+    def interview_schema(self):
+        self.db.executescript('''
+        CREATE TABLE IF NOT EXISTS staff_interviews(
+          application INTEGER PRIMARY KEY, candidate INTEGER NOT NULL, scheduled REAL NOT NULL,
+          duration INTEGER NOT NULL, location TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'scheduled',
+          revision INTEGER NOT NULL DEFAULT 1, message INTEGER, request TEXT NOT NULL DEFAULT '',
+          updated REAL NOT NULL, result TEXT, dm_state INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS staff_interview_events(
+          id INTEGER PRIMARY KEY, application INTEGER NOT NULL, actor INTEGER NOT NULL,
+          event TEXT NOT NULL, detail TEXT NOT NULL, created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS staff_trial(
+          application INTEGER PRIMARY KEY, candidate INTEGER NOT NULL, responsible INTEGER NOT NULL,
+          started REAL NOT NULL, ends REAL NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+          result_reason TEXT, decided_by INTEGER, decided REAL);
+        CREATE TABLE IF NOT EXISTS staff_reminders(
+          application INTEGER NOT NULL, revision INTEGER NOT NULL, kind TEXT NOT NULL,
+          recipient INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'attempted', created REAL NOT NULL,
+          PRIMARY KEY(application,revision,kind,recipient));
+        ''')
+
+    def interview(self, application):
+        return self.db.execute('SELECT * FROM staff_interviews WHERE application=?',(application,)).fetchone()
+
+    def interview_event(self, application, actor, event, detail):
+        self.db.execute('INSERT INTO staff_interview_events(application,actor,event,detail,created) VALUES(?,?,?,?,?)',
+                        (application,actor,event,detail,time.time()))
+
+    def interview_schedule(self, application, actor, scheduled, duration, location):
+        with self.db:
+            row=self.helper_application(application)
+            old=self.interview(application)
+            if not row or row['status']!='pending' or row['owner']==actor or (old and old['result']):
+                raise ValueError('Alege o aplicație în așteptare, diferită de propria aplicație.')
+            self.db.execute('''INSERT INTO staff_interviews(application,candidate,scheduled,duration,location,updated)
+                VALUES(?,?,?,?,?,?) ON CONFLICT(application) DO UPDATE SET scheduled=excluded.scheduled,
+                duration=excluded.duration,location=excluded.location,status='scheduled',revision=revision+1,
+                message=NULL,request='',updated=excluded.updated,dm_state=0''',
+                (application,row['owner'],scheduled,duration,location,time.time()))
+            self.interview_event(application,actor,'scheduled',json_interview(scheduled,duration,location))
+        return self.interview(application)
+
+    def interview_message(self, application, revision, message, state):
+        with self.db:
+            self.db.execute('UPDATE staff_interviews SET message=?,dm_state=? WHERE application=? AND revision=?',
+                            (message,state,application,revision))
+
+    def interview_reply(self, application, actor, message, revision, action, reason=''):
+        if action not in ('confirmed','reschedule') or (action=='reschedule' and not 3<=len(reason.strip())<=500):
+            raise ValueError('Răspuns sau motiv invalid.')
+        with self.db:
+            row=self.interview(application)
+            app=self.helper_application(application)
+            if (not row or not app or app['status']!='pending' or row['candidate']!=actor or row['message']!=message
+                    or row['revision']!=revision or row['status'] not in ('scheduled','confirmed') or row['scheduled']<=time.time()):
+                raise ValueError('Invitație expirată, modificată sau care nu îți aparține.')
+            if row['status']==action:
+                raise ValueError('Răspunsul a fost deja salvat.')
+            self.db.execute('UPDATE staff_interviews SET status=?,request=?,updated=? WHERE application=?',
+                            (action,reason,time.time(),application))
+            self.interview_event(application,actor,action,reason)
+        return self.interview(application)
+
+    def trial(self, application):
+        return self.db.execute('SELECT * FROM staff_trial WHERE application=?',(application,)).fetchone()
+
+    def interview_result(self, application, actor, result, reason, responsible=None, days=14):
+        if result not in ('accepted','rejected','trial') or not 3<=len(reason.strip())<=1000:
+            raise ValueError('Rezultat sau motiv invalid.')
+        if result=='trial' and (not responsible or not 1<=days<=90):
+            raise ValueError('Pentru probă alege responsabilul și 1–90 zile.')
+        now=time.time()
+        with self.db:
+            row=self.interview(application)
+            app=self.helper_application(application)
+            if not row or row['result'] or not app or app['status']!='pending' or app['owner']==actor:
+                raise ValueError('Interviul nu există, este deja finalizat sau aplicația nu mai este în așteptare.')
+            if result=='trial' and responsible==app['owner']:
+                raise ValueError('Candidatul nu poate fi propriul responsabil.')
+            self.db.execute("UPDATE helper_applications SET status=?,reviewed_at=?,reviewed_by=?,reason=?,dm_state=0 WHERE id=? AND status='pending'",
+                            ('rejected' if result=='rejected' else 'accepted',now,actor,reason,application))
+            self.db.execute("UPDATE staff_interviews SET status='completed',result=?,updated=? WHERE application=?",(result,now,application))
+            if result=='trial':
+                self.db.execute('INSERT INTO staff_trial(application,candidate,responsible,started,ends) VALUES(?,?,?,?,?)',
+                                (application,app['owner'],responsible,now,now+days*86400))
+            self.interview_event(application,actor,'result:'+result,reason)
+        return self.helper_application(application)
+
+    def trial_note(self, application, actor, note, owner_id):
+        if not 3<=len(note.strip())<=1000:
+            raise ValueError('Observația trebuie să aibă 3–1000 caractere.')
+        with self.db:
+            row=self.trial(application)
+            if not row or row['status']!='active' or actor not in (owner_id,row['responsible']):
+                raise ValueError('Doar proprietarul și responsabilul pot adăuga observații la proba activă.')
+            self.interview_event(application,actor,'trial-note',note)
+
+    def trial_finish(self, application, actor, result, reason):
+        if result not in ('passed','failed') or not 3<=len(reason.strip())<=1000:
+            raise ValueError('Rezultat sau motiv invalid.')
+        with self.db:
+            row=self.trial(application)
+            if not row or row['status']!='active' or actor==row['candidate']:
+                raise ValueError('Proba nu există, este finalizată sau nu îți poți evalua propria probă.')
+            self.db.execute('UPDATE staff_trial SET status=?,result_reason=?,decided_by=?,decided=? WHERE application=?',
+                            (result,reason,actor,time.time(),application))
+            self.interview_event(application,actor,'trial:'+result,reason)
+        return self.trial(application)
+
+    def reminder_reserve(self, application, revision, kind, recipient):
+        with self.db:
+            cur=self.db.execute('INSERT OR IGNORE INTO staff_reminders(application,revision,kind,recipient,created) VALUES(?,?,?,?,?)',
+                                (application,revision,kind,recipient,time.time()))
+        return cur.rowcount==1
+
+    def reminder_finish(self, application, revision, kind, recipient, state):
+        with self.db:
+            self.db.execute('UPDATE staff_reminders SET state=? WHERE application=? AND revision=? AND kind=? AND recipient=?',
+                            (state,application,revision,kind,recipient))
+
+
+def json_interview(scheduled, duration, location):
+    return json.dumps(dict(scheduled=scheduled, duration=duration, location=location), ensure_ascii=False)
