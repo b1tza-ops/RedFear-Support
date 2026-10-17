@@ -45,7 +45,7 @@ class LayoutPreview(discord.ui.View):
 
     @discord.ui.button(label='Aplică organizarea',style=discord.ButtonStyle.success)
     async def apply(self,i,button):
-        self.bot.admin(i)
+        self.bot.admin(i, scope="server_setup")
         if i.user.id != self.owner or self.used:
             raise ValueError('Previzualizarea nu îți aparține sau a fost deja folosită. Rulează /server_setup.')
         await i.response.defer(ephemeral=True,thinking=True)
@@ -181,10 +181,50 @@ class ServerSetup:
             log.exception('Organizare parțială RedFear; canale finalizate: %s',completed)
             raise ValueError('Organizare oprită după o eroare; unele categorii/canale pot fi deja actualizate. Rulează /server_setup din nou pentru continuare. Nu s-au șters mesaje.')
 
+    async def staff_plan(self, guild):
+        bot = await guild.fetch_member(guild.me.id)
+        if not bot.guild_permissions.manage_roles:
+            raise ValueError('Botul are nevoie de Manage Roles; pune rolul botului deasupra staffului.')
+        existing = await guild.fetch_roles()
+        config = self.community_config('staff-roles') or {}
+        moderation = self.moderation_config() or {}
+        plan = []
+        for key, name, color in STAFF_ROLES:
+            rid = config.get(key) or (moderation.get(key) if key in ('helper', 'moderator') else None)
+            if rid:
+                matches = [r for r in existing if r.id == rid]
+                if not matches:
+                    raise ValueError('Un rol salvat lipsește. Verifică rolurile înainte de configurare.')
+            else:
+                matches = [r for r in existing if normalized(r.name) == normalized(name)]
+            if len(matches) > 1:
+                raise ValueError('Există roluri cu nume duplicate: ' + name)
+            role = matches[0] if matches else None
+            if role and (role.managed or role.is_default() or role >= bot.top_role):
+                raise ValueError('Rol invalid sau deasupra botului: ' + role.name)
+            if role and key in ('discord', 'support', 'moderation') and role.permissions.value:
+                raise ValueError('Rolul de manager existent are permisiuni Discord. Verifică-l manual: ' + role.name)
+            plan.append((key, role.name if role else name, color, role.id if role else None,
+                         role.permissions.value if role else 0))
+        if len({row[3] for row in plan if row[3]}) != sum(bool(row[3]) for row in plan):
+            raise ValueError('Fiecare funcție trebuie să folosească un rol distinct.')
+        return plan
+
     def register_server_setup(self):
+        @self.tree.command(name='staff_setup', description='Doar proprietarul: previzualizează și creează rolurile de staff')
+        @app_commands.guild_only()
+        async def staff_setup(i: discord.Interaction):
+            self.require_owner(i)
+            await i.response.defer(ephemeral=True, thinking=True)
+            async with self.layout_lock:
+                plan = await self.staff_plan(i.guild)
+            lines = [f'{name}: ' + (f'reutilizat <@&{rid}>; permisiuni păstrate ({permissions})' if rid else 'nou, fără permisiuni Discord')
+                     for key, name, color, rid, permissions in plan]
+            await i.followup.send('\n'.join(lines) + '\n\nNu se atribuie roluri membrilor. Confirmarea expiră în 3 minute. Ban/kick sunt disponibile și Managerilor Discord/Suport. Unban/purge și configurările de acces sunt rezervate proprietarului.',
+                                  view=StaffPreview(self, plan), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
         @self.tree.command(name='server_map',description='Alege explicit un canal existent pentru organizare')
         @app_commands.guild_only()
-        @app_commands.default_permissions(administrator=True)
         @app_commands.choices(destination=[app_commands.Choice(name=key,value=key) for key,*_ in CHANNELS if key not in ('reviews','logs')])
         async def mapping(i:discord.Interaction,destination:app_commands.Choice[str],channel:discord.TextChannel):
             self.admin(i)
@@ -197,7 +237,6 @@ class ServerSetup:
 
         @self.tree.command(name='server_setup',description='Previzualizează organizarea canalelor; aplicarea cere butonul de confirmare')
         @app_commands.guild_only()
-        @app_commands.default_permissions(administrator=True)
         async def setup(i:discord.Interaction,create_missing:bool=False):
             self.admin(i)
             await i.response.defer(ephemeral=True,thinking=True)
@@ -213,7 +252,6 @@ class ServerSetup:
 
         @self.tree.command(name='roles_create_defaults',description='Creează/reutilizează roluri simple pentru Evenimente și Update-uri și publică panoul')
         @app_commands.guild_only()
-        @app_commands.default_permissions(administrator=True)
         async def defaults(i:discord.Interaction,channel:discord.TextChannel):
             self.admin(i)
             await i.response.defer(ephemeral=True,thinking=True)
@@ -247,3 +285,60 @@ class ServerSetup:
                     selected.append(role)
                 await self.publish_community_roles(channel,selected)
             await i.followup.send('Rolurile de notificări sunt pregătite și panoul este publicat. Helper/Moderator nu au fost modificate.',ephemeral=True)
+
+
+STAFF_ROLES = (
+    ('discord', '🛠️ Manager Discord', 0x5865F2),
+    ('support', '🎫 Manager Suport', 0x3498DB),
+    ('moderation', '🛡️ Manager Moderare', 0xE74C3C),
+    ('helper', '🟢 Helper', 0x2ECC71),
+    ('moderator', '🟠 Moderator', 0xE67E22),
+)
+
+
+class StaffPreview(discord.ui.View):
+    def __init__(self, bot, plan):
+        import time
+        super().__init__(timeout=180)
+        self.bot, self.plan, self.used = bot, plan, False
+        self.expires = time.monotonic() + 180
+
+    @discord.ui.button(label='Confirmă rolurile', style=discord.ButtonStyle.success)
+    async def apply(self, i, button):
+        import time
+        self.bot.require_owner(i)
+        await i.response.defer(ephemeral=True, thinking=True)
+        async with self.bot.layout_lock:
+            if self.used or time.monotonic() >= self.expires:
+                raise ValueError('Confirmare expirată sau deja utilizată. Rulează /staff_setup.')
+            self.used = True
+            bot = await i.guild.fetch_member(i.guild.me.id)
+            if not bot.guild_permissions.manage_roles:
+                raise ValueError('Botul are nevoie de Manage Roles.')
+            roles = {r.id: r for r in await i.guild.fetch_roles()}
+            # Validate every reused role before creating anything.
+            for key, name, color, rid, permissions in self.plan:
+                if rid:
+                    role = roles.get(rid)
+                    if (not role or role.managed or role.is_default() or role >= bot.top_role
+                            or role.permissions.value != permissions or role.name != name):
+                        raise ValueError('Rolurile s-au schimbat. Rulează /staff_setup din nou.')
+                elif any(normalized(r.name) == normalized(name) for r in roles.values()):
+                    raise ValueError('A apărut un rol cu același nume. Rulează /staff_setup din nou.')
+            config = self.bot.community_config('staff-roles') or {}
+            for key, name, color, rid, permissions in self.plan:
+                if not rid:
+                    role = await i.guild.create_role(name=name, permissions=discord.Permissions.none(),
+                                                    colour=discord.Colour(color), mentionable=False,
+                                                    reason='Configurare staff de către proprietarul RedFear')
+                    rid = role.id
+                config[key] = rid
+                # Persist each result so retries reuse roles after a partial failure.
+                self.bot.save_community('staff-roles', config)
+            self.bot.save_community('moderation', dict(helper=config['helper'], moderator=config['moderator']))
+        button.disabled = True
+        await i.edit_original_response(view=self)
+        await i.followup.send('Roluri configurate. Nu s-au atribuit roluri membrilor și nu s-au modificat permisiunile rolurilor existente. Manager Suport este recunoscut pentru tichetele noi; accesul la cele existente se configurează separat.', ephemeral=True)
+
+    async def on_error(self, i, error, item):
+        await self.bot.command_error(i, error)
