@@ -99,6 +99,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {'GUILD_ID':'100', 'TICKET_CATEGORY_ID':'200', 'ARCHIVE_CHANNEL_ID':'300',
                                       'SUPPORT_ROLE_IDS':'400', 'DATA_DIR':self.directory.name}):
             self.bot = Bot()
+            self.bot.owner_user_id = 2
         self.owner, self.staff_member, self.extra = member(1), member(2, True), member(3)
         self.everyone, self.role, self.bot_member = MagicMock(spec=discord.Role), MagicMock(spec=discord.Role), member(4)
         self.role.mention = '<@&400>'
@@ -133,7 +134,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
             for item in modal.children:
                 self.assertLessEqual(len(item.label),45)
                 self.assertLessEqual(len(item.placeholder),100)
-        self.assertEqual({c.name for c in self.bot.tree.get_commands()}, {'ticket_panel','ticket_controls','ticket_categories','ticket_stats','ticket_health','ticket_block','ticket_unblock','ticket_idle','ticket_backup','fivem_setup','fivem_status','fivem_stop','helper_setup','helper_toggle','helper_status','helper_republish','helper_resend','welcome_setup','welcome_toggle','welcome_test','roles_setup','community_logs','community_logs_stop','server_map','server_setup','roles_create_defaults','moderation_setup','warn','warnings','mod_history','mod_case','timeout','untimeout','kick','ban','mod_log_retry','casino_setup','casino_stop','blackjack','casino_profile','casino_daily','casino_top','ticket_archive_closed','unban','warn_revoke','purge'})
+        self.assertEqual({c.name for c in self.bot.tree.get_commands()}, {'ticket_panel','ticket_controls','ticket_categories','ticket_stats','ticket_health','ticket_block','ticket_unblock','ticket_idle','ticket_backup','fivem_setup','fivem_status','fivem_stop','helper_setup','helper_toggle','helper_status','helper_republish','helper_resend','welcome_setup','welcome_toggle','welcome_test','roles_setup','community_logs','community_logs_stop','server_map','server_setup','roles_create_defaults','moderation_setup','warn','warnings','mod_history','mod_case','timeout','untimeout','kick','ban','mod_log_retry','casino_setup','casino_stop','blackjack','casino_profile','casino_daily','casino_top','ticket_archive_closed','unban','warn_revoke','purge','staff_setup'})
 
     async def test_no_manage_roles_overwrite(self):
         overwrites = self.bot.overwrites(self.guild,[self.role],self.owner)
