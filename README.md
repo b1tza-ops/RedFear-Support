@@ -322,13 +322,16 @@ Testele folosesc SQLite real și interacțiuni Discord simulate. Nu înlocuiesc 
 
 ### Staff și controlul proprietarului
 
-Proprietarul botului este contul Discord `415585084213690378`. Verificarea se face după ID, în serverul configurat. Administrator nu ocolește restricțiile comenzilor de configurare și ban/kick/unban/purge. Aceste restricții privesc botul; permisiunile Discord acordate manual permit în continuare acțiuni native.
+Proprietarul botului este contul Discord `415585084213690378`. Verificarea se face după ID, în serverul configurat. Administrator nu ocolește restricțiile comenzilor de configurare și unban/purge. Aceste restricții privesc botul; permisiunile Discord acordate manual permit în continuare acțiuni native.
 
 `/staff_setup` (numai proprietarul) arată un plan cu confirmare de 3 minute. Creează numai rolurile lipsă: Manager Discord, Manager Suport, Manager Moderare, Helper, Moderator. Helper/Moderator configurate sunt reutilizate după ID; altfel potrivirea folosește nume normalizate unice. Rolurile noi au zero permisiuni native, nu sunt atribuite membrilor și nu primesc Administrator. Rolurile existente își păstrează permisiunile; rolurile de manager existente cu permisiuni native sunt refuzate pentru verificare manuală. Botul necesită Manage Roles și un rol deasupra tuturor rolurilor selectate. Rezultatele fiecărui pas se salvează pentru reluare după o eroare parțială.
 
 - Manager Discord: `/server_setup` cu confirmare, `/server_map`, `/roles_create_defaults`, `/roles_setup`, `/welcome_test`. Configurarea autorolului și accesul la loguri rămân la proprietar.
 - Manager Suport: tichete, repartizare/transfer, priorități, panou și diagnostic. Accesul explicit este inclus în tichetele noi; cele existente nu primesc automat permisiuni noi.
 - Manager Moderare: avertismente, istoric, retragerea avertismentelor, timeout/untimeout prin bot (botul trebuie să aibă Moderate Members; ierarhia rolurilor este verificată).
-- Helper/Moderator: comportamentul curent, cu excepția ban/kick/unban/purge rezervate proprietarului.
+- Helper/Moderator: comportamentul curent, cu excepția ban/kick rezervate proprietarului și Managerilor Discord/Suport, respectiv unban/purge rezervate proprietarului.
 
 Rolurile sunt atribuite manual de proprietar. Nu există încă un flux prin care managerii trimit cereri de sancțiune pentru aprobarea proprietarului. Confirmările existente pentru sancțiuni și purge sunt păstrate. Nu se migrează automat permisiunile canalelor private existente. Rolurile de staff sunt refuzate în panourile de autoatribuire și autorol.
+
+
+Actualizare acces manageri: Manager Discord și Manager Suport pot folosi `/ban` și `/kick` prin bot, fără permisiuni native Ban Members/Kick Members. Motivul, confirmarea, verificarea rolurilor proaspăt citite de la Discord, ierarhia operatorului și a botului și logul privat sunt păstrate. Botul necesită permisiunile native. Manager Moderare, Moderator, Helper și Administrator nu primesc acest acces doar din titulatură/Administrator. `/unban` și `/purge` rămân exclusiv la proprietar. Comenzile delegate nu folosesc default_member_permissions=0, care le-ar ascunde de managerii fără Administrator.

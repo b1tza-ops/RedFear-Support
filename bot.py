@@ -262,7 +262,6 @@ class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Opera
     def register_commands(self):
         @self.tree.command(name='ticket_panel', description='Publică panoul de suport RedFear')
         @app_commands.guild_only()
-        @app_commands.default_permissions()
         async def panel(i: discord.Interaction):
             self.admin(i)
             await i.response.defer(ephemeral=True, thinking=True)

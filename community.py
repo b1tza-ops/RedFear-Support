@@ -228,7 +228,6 @@ class Community:
 
         @self.tree.command(name='welcome_test', description='Previzualizează privat mesajul de bun venit, fără acordare de rol')
         @app_commands.guild_only()
-        @app_commands.default_permissions()
         async def test(i: discord.Interaction):
             self.admin(i)
             config = self.community_config('welcome')
@@ -239,7 +238,6 @@ class Community:
 
         @self.tree.command(name='roles_setup', description='Panou cu maximum cinci roluri simple opționale, fără permisiuni')
         @app_commands.guild_only()
-        @app_commands.default_permissions()
         async def roles(i: discord.Interaction, channel: discord.TextChannel, role1: discord.Role,
                         role2: discord.Role = None, role3: discord.Role = None, role4: discord.Role = None, role5: discord.Role = None):
             self.admin(i)
