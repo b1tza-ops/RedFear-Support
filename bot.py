@@ -17,6 +17,7 @@ from community import Community, CommunityRoles
 from server_setup import ServerSetup
 from moderation import Moderation
 from casino import Casino, BlackjackButton
+from interviews import Interviews, InterviewReply
 from applications import Applications, HelperPanel, HelperReview, StaffRecruitment, StaffApplicationPanel
 
 load_dotenv()
@@ -185,7 +186,7 @@ class ClosedControls(SafeView):
         await self.bot.reopen_ticket(i)
 
 
-class Bot(StaffRecruitment, Casino, Moderation, ServerSetup, Community, Applications, FiveM, Operations, discord.Client):
+class Bot(Interviews, StaffRecruitment, Casino, Moderation, ServerSetup, Community, Applications, FiveM, Operations, discord.Client):
     owner_user_id = 415585084213690378
 
     def __init__(self):
@@ -222,6 +223,7 @@ class Bot(StaffRecruitment, Casino, Moderation, ServerSetup, Community, Applicat
         self.register_fivem()
         self.register_applications()
         self.register_staff_applications()
+        self.register_interviews()
         self.init_community()
         self.register_server_setup()
         self.register_moderation()
@@ -364,7 +366,7 @@ class Bot(StaffRecruitment, Casino, Moderation, ServerSetup, Community, Applicat
     async def setup_hook(self):
         self.casino_recovered = self.store.casino_recover()
         self.add_dynamic_items(BlackjackButton)
-        for view in (Panel(self), Controls(self), ClosedControls(self), HelperPanel(self), HelperReview(self), StaffApplicationPanel(self), CommunityRoles(self)):
+        for view in (Panel(self), Controls(self), ClosedControls(self), HelperPanel(self), HelperReview(self), StaffApplicationPanel(self), InterviewReply(self), CommunityRoles(self)):
             self.add_view(view)
         guild = discord.Object(id=self.guild_id)
         self.tree.copy_global_to(guild=guild)
@@ -375,12 +377,14 @@ class Bot(StaffRecruitment, Casino, Moderation, ServerSetup, Community, Applicat
         self.fivem_poll.start()
         self.community_flush.start()
         self.casino_poll.start()
+        self.recruitment_poll.start()
 
     async def close(self):
         self.maintenance.cancel()
         self.fivem_poll.cancel()
         self.community_flush.cancel()
         self.casino_poll.cancel()
+        self.recruitment_poll.cancel()
         await super().close()
 
     def staff(self, member):
