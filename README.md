@@ -335,3 +335,14 @@ Rolurile sunt atribuite manual de proprietar. Nu există încă un flux prin car
 
 
 Actualizare acces manageri: Manager Discord și Manager Suport pot folosi `/ban` și `/kick` prin bot, fără permisiuni native Ban Members/Kick Members. Motivul, confirmarea, verificarea rolurilor proaspăt citite de la Discord, ierarhia operatorului și a botului și logul privat sunt păstrate. Botul necesită permisiunile native. Manager Moderare, Moderator, Helper și Administrator nu primesc acest acces doar din titulatură/Administrator. `/unban` și `/purge` rămân exclusiv la proprietar. Comenzile delegate nu folosesc default_member_permissions=0, care le-ar ascunde de managerii fără Administrator.
+
+
+### Aplicații pentru toate funcțiile de staff
+
+Proprietarul rulează `/staff_applications_setup panel_channel:#aplicatii-staff category:STAFF cooldown_days:7`. Canalul panoului trebuie să fie public; categoria este aleasă explicit. Panoul oferă Manager Discord, Manager Suport, Manager Moderare, Moderator și Helper, fiecare cu formular de cinci întrebări specifice. În categoria aleasă se creează cinci camere `evaluari-*`, cu acces explicit doar pentru bot și proprietar. Administratorii Discord pot în continuare vedea canale private, însă numai ID-ul proprietarului poate evalua cererile noi prin butoane.
+
+Dacă panoul Helper existent este în canalul ales, mesajul său este actualizat. Recrutarea prin vechiul buton Helper este dezactivată după configurarea reușită. Aplicațiile Helper anterioare, răspunsurile, mesajele, stările și evaluatorii lor rămân intacte. Migrarea SQLite adaugă funcția cu valoarea implicită `helper`. Toate funcțiile împart limita de o cerere în așteptare per candidat, pauza de 60 secunde între trimiteri și perioada configurată după decizie.
+
+Evaluarea cere motiv, se salvează înainte de notificare și nu atribuie roluri automat. Acceptare/respingere prin butoanele cardului privat; nici proprietarul nu își poate evalua propria cerere. La fiecare trimitere/evaluare/restaurare de card, permisiunile camerei noi sunt înlocuite înainte de publicarea răspunsurilor. Camerele înregistrate sunt protejate de organizarea generală a canalelor și de purge. Configurarea salvează progresul camerelor și poate fi reluată după o eroare, fără a le recrea. Recrutarea este oprită până când configurarea se termină.
+
+Comenzi: `/staff_application_status` (ultima cerere proprie, inclusiv Helper vechi), `/staff_applications_toggle enabled:False`, `/staff_application_republish application_id:...` și `/staff_application_resend application_id:...` (ultimele trei numai proprietarul). Când DM-ul este blocat, candidatul poate citi rezultatul și motivul prin status. Butoanele panoului și ale evaluărilor funcționează după restart. Camerele existente cu nume similare nu sunt adoptate automat și permisiunile lor nu sunt schimbate.

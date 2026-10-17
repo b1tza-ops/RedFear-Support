@@ -97,7 +97,7 @@ class HelperDecisionModal(discord.ui.Modal,title='Confirmă evaluarea aplicație
 
 
 def application_embed(row):
-    embed=discord.Embed(title=f'Aplicație Helper #{row["id"]} • {LABELS[row["status"]]}',
+    embed=discord.Embed(title=f'Aplicație {STAFF_KINDS[row["kind"]][0]} #{row["id"]} • {LABELS[row["status"]]}',
         description=f'Candidat: <@{row["owner"]}> • ID {row["owner"]}',
         color={'pending':0xF39C12,'accepted':0x2ECC71,'rejected':0xE74C3C,'failed':0x999999}[row['status']])
     for answer in json.loads(row['answers']):
@@ -122,6 +122,8 @@ class Applications:
                 guild.me:discord.PermissionOverwrite(view_channel=True,send_messages=True,embed_links=True,read_message_history=True)}
 
     async def helper_private_room(self,guild,channel_id,role_id):
+        if role_id == 0:
+            return await self.staff_private_room(guild, channel_id)
         role=guild.get_role(role_id)
         if role is None or role.is_default() or role.is_bot_managed():
             raise ValueError('Rolul de conducere nu mai este valid. Rulează /helper_setup.')
@@ -151,7 +153,9 @@ class Applications:
             row=self.store.helper_card(i.channel_id,i.message.id) if i.message else None
         if not row or i.channel_id!=row['review_channel'] or (message_id is not None and row['message']!=message_id):
             raise ValueError('Folosește cardul curent al aplicației din canalul privat.')
-        if not i.user.guild_permissions.administrator and not any(r.id==row['reviewer_role'] for r in i.user.roles):
+        if row['reviewer_role'] == 0:
+            self.require_owner(i)
+        elif not i.user.guild_permissions.administrator and not any(r.id==row['reviewer_role'] for r in i.user.roles):
             raise ValueError('Numai conducerea poate evalua aplicațiile.')
         return row
 
@@ -227,7 +231,7 @@ class Applications:
             row=self.store.helper_latest(i.user.id)
             if row is None:
                 return await respond(i,'Nu ai trimis încă o aplicație pentru Helper.')
-            text=f'Aplicația ta #{row["id"]}: **{LABELS[row["status"]]}**.'
+            text=f'Aplicația ta {STAFF_KINDS[row["kind"]][0]} #{row["id"]}: **{LABELS[row["status"]]}**.'
             if row['reason']:
                 text+='\nMotiv: '+row['reason']
             if row['status']=='accepted':
@@ -293,7 +297,7 @@ class Applications:
     async def notify_helper(self,row):
         try:
             owner=await self.fetch_user(row['owner'])
-            text=f'RedFear • Aplicația Helper #{row["id"]}: {LABELS[row["status"]]}.\nMotiv: {row["reason"]}'
+            text=f'RedFear • Aplicația {STAFF_KINDS[row["kind"]][0]} #{row["id"]}: {LABELS[row["status"]]}.\nMotiv: {row["reason"]}'
             if row['status']=='accepted':
                 text+='\nConducerea te va contacta pentru discuție. Rolul va fi acordat manual.'
             await owner.send(text,allowed_mentions=discord.AllowedMentions.none())
@@ -325,3 +329,219 @@ class Applications:
             await respond(i,f'Decizie salvată: {LABELS[status]}. '+('Candidatul a primit DM.' if sent else 'DM indisponibil; candidatul poate folosi /helper_status.')+
                           ('' if card_updated else ' Refă cardul cu /helper_republish.')+
                           (' Rolul trebuie acordat manual după discuție.' if status=='accepted' else ''))
+
+
+STAFF_KINDS = {
+    'discord': ('Manager Discord', '🛠️', [
+        ('Experiență cu administrarea Discord', 900, 20),
+        ('Cum organizezi canalele și permisiunile?', 1000, 20),
+        ('Planul tău pentru comunitatea RedFear', 900, 20)]),
+    'support': ('Manager Suport', '🎫', [
+        ('Experiență în coordonarea suportului', 900, 20),
+        ('Cum gestionezi un tichet dificil?', 1000, 20),
+        ('Cum organizezi și verifici echipa?', 900, 20)]),
+    'moderation': ('Manager Moderare', '🛡️', [
+        ('Experiență în coordonarea moderării', 900, 20),
+        ('Cum investighezi un abuz de staff?', 1000, 20),
+        ('Cum asiguri sancțiuni corecte?', 900, 20)]),
+    'moderator': ('Moderator', '🟠', [
+        ('Experiență în moderare', 900, 10),
+        ('Cum gestionezi un conflict între membri?', 1000, 20),
+        ('De ce vrei să fii Moderator?', 900, 10)]),
+    'helper': ('Helper', '🟢', [QUESTIONS[1], QUESTIONS[3], QUESTIONS[4]]),
+}
+
+
+def staff_questions(kind):
+    if kind not in STAFF_KINDS:
+        raise ValueError('Funcție necunoscută.')
+    return [QUESTIONS[0], QUESTIONS[2], *STAFF_KINDS[kind][2]]
+
+
+class StaffApplicationPanel(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+        select = discord.ui.Select(placeholder='Alege funcția pentru care aplici',
+            custom_id='redfear:staff:application:v1', options=[discord.SelectOption(label=name, value=key, emoji=emoji)
+                for key, (name, emoji, _) in STAFF_KINDS.items()])
+        async def choose(i):
+            kind = select.values[0]
+            config = bot.staff_require_applicant(i, i.message.id, kind)
+            bot.store.helper_eligible(i.user.id, config['cooldown_days'] * 86400)
+            await i.response.send_modal(StaffApplicationModal(bot, i.message.id, kind))
+        select.callback = choose
+        self.add_item(select)
+
+    async def on_error(self, i, error, item):
+        await self.bot.command_error(i, error)
+
+
+class StaffApplicationModal(discord.ui.Modal):
+    def __init__(self, bot, panel, kind):
+        super().__init__(title='Aplică: ' + STAFF_KINDS[kind][0])
+        self.bot, self.panel, self.kind = bot, panel, kind
+        for label, maximum, minimum in staff_questions(kind):
+            self.add_item(discord.ui.TextInput(label=label, style=discord.TextStyle.paragraph,
+                min_length=minimum, max_length=maximum, required=True))
+
+    async def on_submit(self, i):
+        await i.response.defer(ephemeral=True, thinking=True)
+        answers = [dict(question=q[0], answer=str(item)) for q, item in zip(staff_questions(self.kind), self.children)]
+        await self.bot.submit_staff_application(i, self.panel, self.kind, answers)
+
+    async def on_error(self, i, error):
+        await self.bot.command_error(i, error)
+
+
+class StaffRecruitment:
+    async def staff_review_overwrites(self, guild):
+        if guild.default_role.permissions.administrator:
+            raise ValueError('@everyone are Administrator; evaluarea nu poate fi privată.')
+        owner = await guild.fetch_member(self.owner_user_id)
+        access = dict(view_channel=True, send_messages=True, embed_links=True, read_message_history=True)
+        return {guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                guild.me: discord.PermissionOverwrite(**access), owner: discord.PermissionOverwrite(**access)}
+
+    async def staff_private_room(self, guild, channel_id):
+        config = self.community_config('staff-applications') or {}
+        if channel_id not in config.get('rooms', {}).values():
+            raise ValueError('Camera nu este o cameră de evaluare staff înregistrată.')
+        room = await guild.fetch_channel(channel_id)
+        if not isinstance(room, discord.TextChannel) or room.guild.id != self.guild_id:
+            raise ValueError('Camera privată de evaluare nu mai există.')
+        await room.edit(overwrites=await self.staff_review_overwrites(guild), reason='Evaluare staff privată pentru proprietar')
+        return room
+
+    def staff_require_applicant(self, i, panel, kind):
+        config = self.community_config('staff-applications')
+        if i.guild_id != self.guild_id or not config or not config['enabled'] or kind not in STAFF_KINDS:
+            raise ValueError('Recrutarea staff este închisă momentan.')
+        if (i.user.bot or i.channel_id != config.get('panel_channel') or panel != config.get('panel_message')
+                or kind not in config['rooms']):
+            raise ValueError('Folosește panoul curent de aplicații staff.')
+        if not i.channel.permissions_for(i.user).view_channel:
+            raise ValueError('Nu ai acces la panou.')
+        return config
+
+    async def submit_staff_application(self, i, panel, kind, answers):
+        async with self.applications_lock:
+            config = self.staff_require_applicant(i, panel, kind)
+            questions = staff_questions(kind)
+            if len(answers) != len(questions) or any(a.get('question') != q[0] or not isinstance(a.get('answer'), str)
+                    or not q[2] <= len(a['answer']) <= q[1] for a, q in zip(answers, questions)):
+                raise ValueError('Formular incomplet sau răspunsuri invalide.')
+            self.store.helper_eligible(i.user.id, config['cooldown_days'] * 86400)
+            room = await self.staff_private_room(i.guild, config['rooms'][kind])
+            number = self.store.helper_create(i.user.id, json.dumps(answers, ensure_ascii=False), room.id, 0,
+                                             config['cooldown_days'] * 86400, kind=kind)
+            try:
+                message = await room.send(embed=application_embed(self.store.helper_application(number)),
+                                         view=HelperReview(self), allowed_mentions=discord.AllowedMentions.none())
+                self.store.helper_set_message(number, message.id)
+            except Exception:
+                self.store.helper_delivery_failed(number)
+                raise
+            await respond(i, f'Aplicația pentru {STAFF_KINDS[kind][0]} #{number} a fost trimisă. Rezultat prin DM sau /staff_application_status.')
+
+    def register_staff_applications(self):
+        @self.tree.command(name='staff_applications_setup', description='Proprietar: panou public și cinci camere private de evaluare')
+        @app_commands.guild_only()
+        async def setup(i: discord.Interaction, panel_channel: discord.TextChannel, category: discord.CategoryChannel,
+                        cooldown_days: app_commands.Range[int, 1, 90] = 7):
+            self.require_owner(i)
+            if panel_channel.guild.id != self.guild_id or category.guild.id != self.guild_id:
+                raise ValueError('Alege canalul și categoria din serverul configurat.')
+            if panel_channel.id in self.protected_layout_channels():
+                raise ValueError('Panoul nu poate fi publicat într-un tichet sau o cameră protejată.')
+            legacy = self.helper_config()
+            if legacy and panel_channel.id == legacy['review_channel']:
+                raise ValueError('Panoul public trebuie separat de evaluarea Helper existentă.')
+            if not panel_channel.permissions_for(i.guild.default_role).view_channel:
+                raise ValueError('Alege un canal public pentru aplicații.')
+            await i.response.defer(ephemeral=True, thinking=True)
+            async with self.applications_lock:
+                config = self.community_config('staff-applications') or dict(rooms={})
+                # Save room IDs individually and pause submissions until setup completes.
+                config['enabled'] = False
+                self.save_community('staff-applications', config)
+                for kind in STAFF_KINDS:
+                    room = None
+                    if config['rooms'].get(kind):
+                        try:
+                            room = await self.staff_private_room(i.guild, config['rooms'][kind])
+                        except discord.NotFound:
+                            # Historical rows still refer to the deleted room; do not republish elsewhere automatically.
+                            pass
+                    if room is None:
+                        room = await i.guild.create_text_channel('evaluari-' + {'discord':'manager-discord', 'support':'manager-suport', 'moderation':'manager-moderare', 'moderator':'moderator', 'helper':'helper'}[kind], category=category,
+                            overwrites=await self.staff_review_overwrites(i.guild), reason='Recrutare staff RedFear')
+                        config['rooms'][kind] = room.id
+                        self.save_community('staff-applications', config)
+                    elif room.category_id != category.id:
+                        await room.edit(category=category, sync_permissions=False)
+                embed = discord.Embed(title='📝 RedFear • Recrutare Staff', color=0xDC2626,
+                    description='Alege funcția și completează formularul. Evaluarea este rezervată proprietarului.\n'
+                                'Nu trimite parole sau tokenuri. Acceptarea nu acordă automat rolul.')
+                embed.add_field(name='Reaplicare', value=f'O singură aplicație în așteptare, indiferent de funcție. Reaplicare după {cooldown_days} zile de la decizie.')
+                message = None
+                # Upgrade the existing Helper panel when it is in the selected public channel.
+                source = config if config.get('panel_channel') == panel_channel.id else legacy
+                if source and source.get('panel_channel') == panel_channel.id:
+                    try:
+                        message = await panel_channel.fetch_message(source['panel_message'])
+                    except discord.NotFound:
+                        pass
+                if message:
+                    await message.edit(embed=embed, view=StaffApplicationPanel(self))
+                else:
+                    message = await panel_channel.send(embed=embed, view=StaffApplicationPanel(self),
+                                                       allowed_mentions=discord.AllowedMentions.none())
+                config.update(panel_channel=panel_channel.id, panel_message=message.id,
+                              cooldown_days=cooldown_days, enabled=True)
+                self.save_community('staff-applications', config)
+                if legacy:
+                    legacy['enabled'] = False
+                    self.store.set_setting('helper:config', json.dumps(legacy))
+            await respond(i, 'Recrutare configurată pentru toate cele cinci funcții. Camerele sunt în categoria selectată. '
+                             'Evaluarea prin bot este doar pentru tine; administratorii Discord pot vedea canalele private. '
+                             'Aplicațiile Helper existente sunt păstrate și pot fi evaluate în continuare.')
+
+        @self.tree.command(name='staff_application_status', description='Starea ultimei tale aplicații staff, în privat')
+        @app_commands.guild_only()
+        async def status(i: discord.Interaction):
+            if i.guild_id != self.guild_id:
+                raise ValueError('Server neautorizat.')
+            row = self.store.helper_latest(i.user.id)
+            if not row:
+                return await respond(i, 'Nu ai trimis încă o aplicație staff.')
+            text = f'Aplicație {STAFF_KINDS[row["kind"]][0]} #{row["id"]}: **{LABELS[row["status"]]}**.'
+            if row['reason']:
+                text += '\nMotiv: ' + row['reason']
+            if row['status'] == 'accepted':
+                text += '\nRolul se acordă manual după discuție.'
+            await respond(i, text)
+
+        @self.tree.command(name='staff_applications_toggle', description='Proprietar: deschide sau închide recrutarea staff')
+        @app_commands.guild_only()
+        async def toggle(i: discord.Interaction, enabled: bool):
+            self.require_owner(i)
+            async with self.applications_lock:
+                config = self.community_config('staff-applications')
+                if not config or not config.get('panel_message') or set(config.get('rooms', {})) != set(STAFF_KINDS):
+                    raise ValueError('Rulează /staff_applications_setup mai întâi.')
+                config['enabled'] = enabled
+                self.save_community('staff-applications', config)
+            await respond(i, 'Recrutare staff ' + ('deschisă.' if enabled else 'închisă.'))
+
+        @self.tree.command(name='staff_application_republish', description='Proprietar: reface cardul privat al unei aplicații staff')
+        @app_commands.guild_only()
+        async def republish(i: discord.Interaction, application_id: app_commands.Range[int, 1]):
+            self.require_owner(i)
+            await self.tree.get_command('helper_republish').callback(i, application_id)
+
+        @self.tree.command(name='staff_application_resend', description='Proprietar: reîncearcă DM-ul cu rezultatul evaluării staff')
+        @app_commands.guild_only()
+        async def resend(i: discord.Interaction, application_id: app_commands.Range[int, 1]):
+            self.require_owner(i)
+            await self.tree.get_command('helper_resend').callback(i, application_id)

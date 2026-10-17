@@ -51,6 +51,9 @@ class Store(CasinoStore):
           case_id INTEGER NOT NULL, message INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
           PRIMARY KEY(case_id,message));
         ''')
+        helper_columns = {r['name'] for r in self.db.execute('PRAGMA table_info(helper_applications)')}
+        if 'kind' not in helper_columns:
+            self.db.execute("ALTER TABLE helper_applications ADD COLUMN kind TEXT NOT NULL DEFAULT 'helper'")
         self.casino_schema()
         columns = {r['name'] for r in self.db.execute('PRAGMA table_info(tickets)')}
         for name, definition in [('closed_at', 'REAL'), ('closed_by', 'INTEGER'), ('reason', 'TEXT'), ('priority', "TEXT NOT NULL DEFAULT 'normal'"),
@@ -245,12 +248,14 @@ class Store(CasinoStore):
         if decision is not None and now < decision+cooldown:
             raise ValueError('Perioada de așteptare pentru o nouă aplicație nu s-a încheiat.')
 
-    def helper_create(self, owner, answers, channel, role, cooldown, now=None):
+    def helper_create(self, owner, answers, channel, role, cooldown, now=None, kind="helper"):
+        if kind not in ("helper", "moderator", "discord", "support", "moderation"):
+            raise ValueError("Funcție necunoscută.")
         now=time.time() if now is None else now
         with self.db:
             self.helper_eligible(owner,cooldown,now)
-            cursor=self.db.execute('INSERT INTO helper_applications(owner,answers,created,review_channel,reviewer_role) VALUES(?,?,?,?,?)',
-                                   (owner,answers,now,channel,role))
+            cursor=self.db.execute('INSERT INTO helper_applications(owner,answers,created,review_channel,reviewer_role,kind) VALUES(?,?,?,?,?,?)',
+                                   (owner,answers,now,channel,role,kind))
         return cursor.lastrowid
 
     def helper_set_message(self, number, message):
