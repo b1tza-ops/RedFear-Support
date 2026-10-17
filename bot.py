@@ -17,7 +17,7 @@ from community import Community, CommunityRoles
 from server_setup import ServerSetup
 from moderation import Moderation
 from casino import Casino, BlackjackButton
-from applications import Applications, HelperPanel, HelperReview
+from applications import Applications, HelperPanel, HelperReview, StaffRecruitment, StaffApplicationPanel
 
 load_dotenv()
 log = logging.getLogger('redfear')
@@ -185,7 +185,7 @@ class ClosedControls(SafeView):
         await self.bot.reopen_ticket(i)
 
 
-class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Operations, discord.Client):
+class Bot(StaffRecruitment, Casino, Moderation, ServerSetup, Community, Applications, FiveM, Operations, discord.Client):
     owner_user_id = 415585084213690378
 
     def __init__(self):
@@ -221,6 +221,7 @@ class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Opera
         self.register_operations()
         self.register_fivem()
         self.register_applications()
+        self.register_staff_applications()
         self.init_community()
         self.register_server_setup()
         self.register_moderation()
@@ -363,7 +364,7 @@ class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Opera
     async def setup_hook(self):
         self.casino_recovered = self.store.casino_recover()
         self.add_dynamic_items(BlackjackButton)
-        for view in (Panel(self), Controls(self), ClosedControls(self), HelperPanel(self), HelperReview(self), CommunityRoles(self)):
+        for view in (Panel(self), Controls(self), ClosedControls(self), HelperPanel(self), HelperReview(self), StaffApplicationPanel(self), CommunityRoles(self)):
             self.add_view(view)
         guild = discord.Object(id=self.guild_id)
         self.tree.copy_global_to(guild=guild)

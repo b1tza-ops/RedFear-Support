@@ -65,6 +65,7 @@ class LayoutPreview(discord.ui.View):
 class ServerSetup:
     def protected_layout_channels(self):
         ids = {self.archive_id,self.category_id}
+        ids.update((self.community_config('staff-applications') or {}).get('rooms', {}).values())
         ids.update(self.community_config('closed-categories') or [])
         ids.update(row[0] for row in self.store.db.execute('SELECT channel FROM tickets WHERE channel IS NOT NULL'))
         for row in self.store.db.execute("SELECT value FROM settings WHERE key LIKE 'category:%'"):
