@@ -186,6 +186,8 @@ class ClosedControls(SafeView):
 
 
 class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Operations, discord.Client):
+    owner_user_id = 415585084213690378
+
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -227,22 +229,40 @@ class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Opera
     async def command_error(self, i, error):
         await report(i, getattr(error, 'original', error))
 
-    def admin(self, i):
-        if i.guild_id != self.guild_id or not i.user.guild_permissions.administrator:
-            raise ValueError('Doar administratorii serverului configurat.')
+    def require_owner(self, i):
+        if i.guild_id != self.guild_id or i.user.id != self.owner_user_id:
+            raise ValueError('Comandă rezervată exclusiv proprietarului botului.')
+
+    def manager(self, member, key):
+        config = self.community_config('staff-roles') or {}
+        return config.get(key) in {r.id for r in member.roles}
+
+    def admin(self, i, scope=None):
+        if i.guild_id != self.guild_id:
+            raise ValueError('Server neautorizat.')
+        if i.user.id == self.owner_user_id:
+            return
+        command = scope or getattr(getattr(i, 'command', None), 'name', None)
+        allowed = {
+            'welcome_test': 'discord', 'roles_setup': 'discord',
+            'server_setup': 'discord', 'server_map': 'discord', 'roles_create_defaults': 'discord',
+            'ticket_panel': 'support', 'ticket_health': 'support',
+        }
+        if command not in allowed or not self.manager(i.user, allowed[command]):
+            raise ValueError('Comandă rezervată proprietarului sau managerului autorizat pentru această funcție.')
 
     def require_staff(self, i, status=None):
         row = self.ticket(i)
         if not row or not self.staff(i.user) or (status and row['status'] != status):
             raise ValueError('Acțiune rezervată staffului; verifică starea tichetului.')
-        if status == 'open' and row['claimed'] is not None and row['claimed'] != i.user.id and not i.user.guild_permissions.administrator:
+        if status == 'open' and row['claimed'] is not None and row['claimed'] != i.user.id and not (i.user.guild_permissions.administrator or i.user.id == self.owner_user_id or self.manager(i.user, 'support')):
             raise ValueError('Tichet preluat de alt coleg. Numai acesta sau un administrator îl poate administra.')
         return row
 
     def register_commands(self):
         @self.tree.command(name='ticket_panel', description='Publică panoul de suport RedFear')
         @app_commands.guild_only()
-        @app_commands.default_permissions(administrator=True)
+        @app_commands.default_permissions()
         async def panel(i: discord.Interaction):
             self.admin(i)
             await i.response.defer(ephemeral=True, thinking=True)
@@ -364,13 +384,19 @@ class Bot(Casino, Moderation, ServerSetup, Community, Applications, FiveM, Opera
         await super().close()
 
     def staff(self, member):
-        return isinstance(member, discord.Member) and (member.guild_permissions.administrator or any(r.id in self.roles for r in member.roles))
+        return isinstance(member, discord.Member) and (member.id == self.owner_user_id or member.guild_permissions.administrator or self.manager(member, 'support') or self.manager(member, 'helper') or self.manager(member, 'moderator') or any(r.id in self.roles for r in member.roles))
 
     def ticket(self, i):
         return self.store.channel(i.channel_id) if i.guild_id == self.guild_id else None
 
     def support_roles(self, guild):
-        roles = [guild.get_role(r) for r in self.roles]
+        ids = set(self.roles)
+        config = self.community_config('staff-roles') or {}
+        for key in ('support', 'helper', 'moderator'):
+            role_id = config.get(key)
+            if role_id and guild.get_role(role_id):
+                ids.add(role_id)
+        roles = [guild.get_role(r) for r in ids]
         if any(r is None for r in roles):
             raise ValueError('Un rol de suport configurat nu mai există.')
         return roles

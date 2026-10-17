@@ -67,17 +67,20 @@ class Moderation:
     async def moderation_actor(self,i,action):
         if i.guild_id!=self.guild_id:
             raise ValueError('Server neautorizat.')
+        if action in ('kick', 'ban', 'unban', 'purge'):
+            self.require_owner(i)
         actor=await i.guild.fetch_member(i.user.id)
         if actor.bot:
             raise ValueError('Acțiune rezervată membrilor staff.')
         config=self.moderation_config()
         administrator=actor.guild_permissions.administrator
+        management=self.manager(actor, 'moderation')
         roles={r.id for r in actor.roles}
         needed=({'helper','moderator'} if action in ('warn','history') else {'moderator'})
-        if not administrator and (not config or not any(config[k] in roles for k in needed)):
+        if not administrator and not management and (not config or not any(config[k] in roles for k in needed)):
             raise ValueError('Acțiune rezervată '+('Helper/Moderator.' if action in ('warn','history') else 'Moderatorilor.'))
         permission=PERMISSIONS.get(action)
-        if permission and not getattr(actor.guild_permissions,permission):
+        if permission and not (management and action in ('timeout', 'untimeout')) and not getattr(actor.guild_permissions,permission):
             raise ValueError('Îți lipsește permisiunea Discord pentru această sancțiune.')
         return actor
 

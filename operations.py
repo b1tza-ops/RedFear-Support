@@ -96,7 +96,7 @@ class Operations:
     def register_operations(self):
         @self.tree.command(name='ticket_health', description='Verifică permisiunile, arhiva, SQLite și backupul')
         @app_commands.guild_only()
-        @app_commands.default_permissions(manage_channels=True)
+        @app_commands.default_permissions()
         async def health(i: discord.Interaction):
             self.require_support(i)
             await i.response.defer(ephemeral=True, thinking=True)
@@ -106,7 +106,7 @@ class Operations:
 
         @self.tree.command(name='ticket_block', description='Suspendă crearea/redeschiderea tichetelor pentru abuz')
         @app_commands.guild_only()
-        @app_commands.default_permissions(manage_channels=True)
+        @app_commands.default_permissions()
         async def block(i: discord.Interaction, member: discord.Member, reason: str, hours: app_commands.Range[int,0,8760]=0):
             self.require_support(i)
             if member.bot or self.staff(member):
@@ -120,7 +120,7 @@ class Operations:
 
         @self.tree.command(name='ticket_unblock', description='Restabilește accesul unui membru la tichete')
         @app_commands.guild_only()
-        @app_commands.default_permissions(manage_channels=True)
+        @app_commands.default_permissions()
         async def unblock(i: discord.Interaction, member: discord.Member):
             self.require_support(i)
             await i.response.defer(ephemeral=True,thinking=True)

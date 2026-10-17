@@ -196,6 +196,7 @@ class BotOperationsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('SQLite: ok',lines)
 
     async def test_command_auth(self):
+        self.bot.owner_user_id = 999
         for command in ('ticket_idle','ticket_backup'):
             with self.assertRaises(ValueError): await self.bot.tree.get_command(command).callback(self.i)
         self.i.user=self.owner
