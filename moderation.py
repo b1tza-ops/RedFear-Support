@@ -67,20 +67,23 @@ class Moderation:
     async def moderation_actor(self,i,action):
         if i.guild_id!=self.guild_id:
             raise ValueError('Server neautorizat.')
-        if action in ('kick', 'ban', 'unban', 'purge'):
+        if action in ('unban', 'purge'):
             self.require_owner(i)
         actor=await i.guild.fetch_member(i.user.id)
         if actor.bot:
             raise ValueError('Acțiune rezervată membrilor staff.')
+        delegated = action in ('ban', 'kick') and (self.manager(actor, 'discord') or self.manager(actor, 'support'))
+        if action in ('ban', 'kick') and not delegated:
+            self.require_owner(i)
         config=self.moderation_config()
         administrator=actor.guild_permissions.administrator
         management=self.manager(actor, 'moderation')
         roles={r.id for r in actor.roles}
         needed=({'helper','moderator'} if action in ('warn','history') else {'moderator'})
-        if not administrator and not management and (not config or not any(config[k] in roles for k in needed)):
+        if not administrator and not management and not delegated and (not config or not any(config[k] in roles for k in needed)):
             raise ValueError('Acțiune rezervată '+('Helper/Moderator.' if action in ('warn','history') else 'Moderatorilor.'))
         permission=PERMISSIONS.get(action)
-        if permission and not (management and action in ('timeout', 'untimeout')) and not getattr(actor.guild_permissions,permission):
+        if permission and not delegated and not (management and action in ('timeout', 'untimeout')) and not getattr(actor.guild_permissions,permission):
             raise ValueError('Îți lipsește permisiunea Discord pentru această sancțiune.')
         return actor
 
@@ -202,27 +205,23 @@ class Moderation:
 
         @self.tree.command(name='timeout',description='Restricționează temporar un membru (1 minut–28 zile)')
         @app_commands.guild_only()
-        @app_commands.default_permissions(moderate_members=True)
         async def timeout(i:discord.Interaction,member:discord.Member,minutes:app_commands.Range[int,1,40320],reason:app_commands.Range[str,3,500]):
             await i.response.defer(ephemeral=True,thinking=True)
             await self.execute_moderation(i,member.id,'timeout',reason,minutes)
 
         @self.tree.command(name='untimeout',description='Elimină timeoutul unui membru')
         @app_commands.guild_only()
-        @app_commands.default_permissions(moderate_members=True)
         async def untimeout(i:discord.Interaction,member:discord.Member,reason:app_commands.Range[str,3,500]):
             await i.response.defer(ephemeral=True,thinking=True)
             await self.execute_moderation(i,member.id,'untimeout',reason)
 
         @self.tree.command(name='kick',description='Propune kick; necesită confirmare și permisiuni')
         @app_commands.guild_only()
-        @app_commands.default_permissions(kick_members=True)
         async def kick(i:discord.Interaction,member:discord.Member,reason:app_commands.Range[str,3,500]):
             await self.preview_sanction(i,member.id,'kick',reason)
 
         @self.tree.command(name='ban',description='Propune ban fără ștergere de mesaje; necesită confirmare')
         @app_commands.guild_only()
-        @app_commands.default_permissions(ban_members=True)
         async def ban(i:discord.Interaction,member:discord.Member,reason:app_commands.Range[str,3,500]):
             await self.preview_sanction(i,member.id,'ban',reason)
 

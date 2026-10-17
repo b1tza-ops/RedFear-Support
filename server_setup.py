@@ -220,12 +220,11 @@ class ServerSetup:
                 plan = await self.staff_plan(i.guild)
             lines = [f'{name}: ' + (f'reutilizat <@&{rid}>; permisiuni păstrate ({permissions})' if rid else 'nou, fără permisiuni Discord')
                      for key, name, color, rid, permissions in plan]
-            await i.followup.send('\n'.join(lines) + '\n\nNu se atribuie roluri membrilor. Confirmarea expiră în 3 minute. Ban/kick/unban/purge și configurările de acces sunt rezervate proprietarului.',
+            await i.followup.send('\n'.join(lines) + '\n\nNu se atribuie roluri membrilor. Confirmarea expiră în 3 minute. Ban/kick sunt disponibile și Managerilor Discord/Suport. Unban/purge și configurările de acces sunt rezervate proprietarului.',
                                   view=StaffPreview(self, plan), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
         @self.tree.command(name='server_map',description='Alege explicit un canal existent pentru organizare')
         @app_commands.guild_only()
-        @app_commands.default_permissions()
         @app_commands.choices(destination=[app_commands.Choice(name=key,value=key) for key,*_ in CHANNELS if key not in ('reviews','logs')])
         async def mapping(i:discord.Interaction,destination:app_commands.Choice[str],channel:discord.TextChannel):
             self.admin(i)
@@ -238,7 +237,6 @@ class ServerSetup:
 
         @self.tree.command(name='server_setup',description='Previzualizează organizarea canalelor; aplicarea cere butonul de confirmare')
         @app_commands.guild_only()
-        @app_commands.default_permissions()
         async def setup(i:discord.Interaction,create_missing:bool=False):
             self.admin(i)
             await i.response.defer(ephemeral=True,thinking=True)
@@ -254,7 +252,6 @@ class ServerSetup:
 
         @self.tree.command(name='roles_create_defaults',description='Creează/reutilizează roluri simple pentru Evenimente și Update-uri și publică panoul')
         @app_commands.guild_only()
-        @app_commands.default_permissions()
         async def defaults(i:discord.Interaction,channel:discord.TextChannel):
             self.admin(i)
             await i.response.defer(ephemeral=True,thinking=True)

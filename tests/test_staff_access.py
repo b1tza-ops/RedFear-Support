@@ -114,3 +114,44 @@ class StaffAccessTests(unittest.IsolatedAsyncioTestCase):
         self.extra.guild_permissions.administrator = True
         with self.assertRaises(ValueError): await view.children[0].callback(self.i)
         self.guild.create_role.assert_not_awaited()
+
+    async def test_discord_and_support_managers_can_confirm_ban_kick_without_native_permissions(self):
+        for key in ('discord','support'):
+            for action in ('ban','kick'):
+                with self.subTest(key=key,action=action):
+                    self.bot.owner_user_id = 999
+                    self.bot.save_community('staff-roles', {key:420})
+                    self.bot.save_community('moderation', None)
+                    self.staff_member.guild_permissions.ban_members = False
+                    self.staff_member.guild_permissions.kick_members = False
+                    await self.bot.preview_sanction(self.i, 1, action, 'Motiv test')
+                    view = self.i.followup.send.await_args.kwargs['view']
+                    await view.children[0].callback(self.i)
+        self.assertEqual(self.guild.ban.await_count, 2)
+        self.assertEqual(self.owner.kick.await_count, 2)
+
+    async def test_manager_role_revoked_before_confirm_blocks_sanction(self):
+        self.bot.owner_user_id = 999
+        self.bot.save_community('staff-roles', dict(discord=420))
+        await self.bot.preview_sanction(self.i, 1, 'ban', 'Motiv test')
+        view=self.i.followup.send.await_args.kwargs['view']
+        self.staff_member.roles=[]
+        with self.assertRaises(ValueError): await view.children[0].callback(self.i)
+        self.guild.ban.assert_not_awaited()
+
+    async def test_manager_cannot_unban_or_purge_and_has_no_native_permission_default(self):
+        self.bot.owner_user_id = 999
+        self.bot.save_community('staff-roles', dict(support=420))
+        for action in ('unban','purge'):
+            with self.assertRaises(ValueError): await self.bot.moderation_actor(self.i, action)
+        for name in ('ban','kick','roles_setup','server_setup','ticket_panel'):
+            self.assertIsNone(self.bot.tree.get_command(name).default_permissions)
+
+    async def test_delegated_ban_still_requires_bot_permission_and_hierarchy(self):
+        self.bot.owner_user_id = 999
+        self.bot.save_community('staff-roles', dict(discord=420))
+        self.bot_member.guild_permissions.ban_members=False
+        with self.assertRaises(ValueError): await self.bot.moderation_authorize(self.i,1,'ban')
+        self.bot_member.guild_permissions.ban_members=True
+        self.owner.top_role=self.mod_role
+        with self.assertRaises(ValueError): await self.bot.moderation_authorize(self.i,1,'ban')
